@@ -10,7 +10,9 @@ use crate::models::application_bundle::{
 };
 use crate::services::app_context::AppContext;
 use crate::services::remote_exec::RemoteExec;
-use crate::services::shared_storage::object_storage::StorageCredential;
+use crate::services::shared_storage::object_storage::{
+    resolve_b2_bucket, StorageCredential, B2_KEY_SCOPE_FIELD,
+};
 use crate::services::shared_storage::provider_profiles::{
     shared_profile_manager, SharedStorageProfileManager,
 };
@@ -57,6 +59,17 @@ pub async fn save_static_provider_credentials(
     let raw_fields: HashMap<String, String> = serde_json::from_str(&credentials_json)
         .map_err(|e| AppError::InvalidInput(format!("Invalid credentials payload: {e}")))?;
     let credentials = build_storage_credentials(&provider, &raw_fields)?;
+    let bucket = if provider == StorageProvider::BackblazeB2 {
+        Some(
+            resolve_b2_bucket(
+                raw_fields.get(B2_KEY_SCOPE_FIELD).map(String::as_str),
+                bucket.as_deref(),
+            )
+            .map_err(AppError::InvalidInput)?,
+        )
+    } else {
+        bucket
+    };
 
     let manager = get_profile_manager();
     let profile = manager

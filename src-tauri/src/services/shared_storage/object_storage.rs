@@ -3,6 +3,30 @@ use crate::models::application_bundle::{
     ProviderDefinition, ProviderField, ProviderFieldType, ProviderSelectOption, StorageProvider,
 };
 
+// ─── Backblaze B2 Bucket Selection ─────────────────────────
+
+/// B2 application keys either reach every bucket in the account or are
+/// restricted to a single bucket. A restricted key cannot create buckets, so
+/// its bucket name must come from the user.
+pub const B2_KEY_SCOPE_FIELD: &str = "key_scope";
+pub const B2_KEY_SCOPE_ALL_BUCKETS: &str = "all_buckets";
+pub const B2_KEY_SCOPE_SINGLE_BUCKET: &str = "single_bucket";
+
+/// Picks the bucket for a new B2 profile. A key restricted to one bucket
+/// needs that bucket's name; an all-buckets key gets a generated, globally
+/// unique name unless one was entered.
+pub fn resolve_b2_bucket(key_scope: Option<&str>, bucket: Option<&str>) -> Result<String, String> {
+    let bucket = bucket.map(str::trim).filter(|value| !value.is_empty());
+    match (key_scope.map(str::trim), bucket) {
+        (_, Some(bucket)) => Ok(bucket.to_string()),
+        (Some(B2_KEY_SCOPE_SINGLE_BUCKET), None) => Err(
+            "Enter the name of the bucket your Backblaze application key is restricted to."
+                .to_string(),
+        ),
+        _ => Ok(crate::models::app_state::generate_default_bucket_name()),
+    }
+}
+
 // ─── Provider Definitions ──────────────────────────────────
 
 impl StorageProvider {
@@ -34,13 +58,36 @@ impl StorageProvider {
                         ),
                     },
                     ProviderField {
-                        key: "bucket".to_string(),
-                        label: "Bucket".to_string(),
-                        field_type: ProviderFieldType::Text,
-                        required: true,
-                        placeholder: Some("noland-backups".to_string()),
+                        key: B2_KEY_SCOPE_FIELD.to_string(),
+                        label: "Key Access".to_string(),
+                        field_type: ProviderFieldType::Select {
+                            options: vec![
+                                ProviderSelectOption {
+                                    value: B2_KEY_SCOPE_ALL_BUCKETS.to_string(),
+                                    label: "All buckets (Noland creates a uniquely named bucket)"
+                                        .to_string(),
+                                },
+                                ProviderSelectOption {
+                                    value: B2_KEY_SCOPE_SINGLE_BUCKET.to_string(),
+                                    label: "Restricted to one bucket".to_string(),
+                                },
+                            ],
+                        },
+                        required: false,
+                        placeholder: None,
                         help_text: Some(
-                            "Bucket names are shared by all Backblaze accounts, so pick a unique one."
+                            "Match the \"Allow access to Bucket(s)\" setting of your Backblaze application key."
+                                .to_string(),
+                        ),
+                    },
+                    ProviderField {
+                        key: "bucket".to_string(),
+                        label: "Bucket Name".to_string(),
+                        field_type: ProviderFieldType::Text,
+                        required: false,
+                        placeholder: Some("The bucket your key is restricted to".to_string()),
+                        help_text: Some(
+                            "Enter the exact name of the bucket this application key can access."
                                 .to_string(),
                         ),
                     },
@@ -696,4 +743,31 @@ pub fn list_all_providers() -> Vec<ProviderDefinition> {
         StorageProvider::Sftp.definition(),
         StorageProvider::Webdav.definition(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn b2_single_bucket_key_requires_bucket_name() {
+        assert!(resolve_b2_bucket(Some(B2_KEY_SCOPE_SINGLE_BUCKET), None).is_err());
+        assert!(resolve_b2_bucket(Some(B2_KEY_SCOPE_SINGLE_BUCKET), Some("  ")).is_err());
+        assert_eq!(
+            resolve_b2_bucket(Some(B2_KEY_SCOPE_SINGLE_BUCKET), Some(" my-bucket ")).unwrap(),
+            "my-bucket"
+        );
+    }
+
+    #[test]
+    fn b2_all_buckets_key_generates_unique_bucket_when_blank() {
+        let a = resolve_b2_bucket(Some(B2_KEY_SCOPE_ALL_BUCKETS), None).unwrap();
+        let b = resolve_b2_bucket(None, Some("")).unwrap();
+        assert!(a.starts_with("noland-"));
+        assert_ne!(a, b);
+        assert_eq!(
+            resolve_b2_bucket(Some(B2_KEY_SCOPE_ALL_BUCKETS), Some("mine")).unwrap(),
+            "mine"
+        );
+    }
 }

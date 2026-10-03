@@ -107,9 +107,14 @@ export function SharedStorageSettingsV2({
   const selectedProviderFields = selectedProvider?.fields ?? [];
   const hasDedicatedBucketField = selectedProviderFields.some((field) => field.key === "bucket");
   const hasDedicatedPrefixField = selectedProviderFields.some((field) => field.key === "prefix");
+  // A Backblaze key restricted to one bucket can't create buckets, so the user
+  // names that bucket. An all-buckets key gets a generated unique name.
+  const isB2 = selectedProvider?.provider === "backblaze_b2";
+  const b2KeyIsSingleBucket = isB2 && formValues["key_scope"] === "single_bucket";
   const staticCredentialFields = selectedProviderFields.filter(
-    (field) => !["bucket", "prefix"].includes(field.key),
+    (field) => !(isB2 && field.key === "bucket" && !b2KeyIsSingleBucket),
   );
+  const missingRequiredBucket = b2KeyIsSingleBucket && !(formValues["bucket"] || "").trim();
   const oauthProviderFields = selectedProviderFields.filter(
     (field) => !["client_id", "client_secret"].includes(field.key),
   );
@@ -134,7 +139,15 @@ export function SharedStorageSettingsV2({
   }
 
   function handleFieldChange(key: string, value: string) {
-    setFormValues((prev) => ({ ...prev, [key]: value }));
+    setFormValues((prev) => {
+      const next = { ...prev, [key]: value };
+      // The bucket field is hidden for an all-buckets key, so don't send a
+      // name typed while the single-bucket option was selected.
+      if (key === "key_scope" && value !== "single_bucket") {
+        delete next["bucket"];
+      }
+      return next;
+    });
   }
 
   async function handleConnect() {
@@ -409,6 +422,7 @@ All data is encrypted before upload and can only be decrypted with your reposito
                         </option>
                       ))}
                     </select>
+                    {field.helpText && <span className="text-xs text-gray-400">{field.helpText}</span>}
                   </label>
                 );
               }
@@ -458,7 +472,7 @@ All data is encrypted before upload and can only be decrypted with your reposito
             <Button
               variant="primary"
               onClick={handleConnect}
-              disabled={busy || displayName.trim().length < 2}
+              disabled={busy || displayName.trim().length < 2 || missingRequiredBucket}
               loading={busy}
               loadingText="Connecting..."
             >
