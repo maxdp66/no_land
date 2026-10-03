@@ -6,9 +6,15 @@ import { AIPromptHelper } from "../../components/ui/AIPromptHelper";
 import { useAppStore } from "../../store/appStore";
 import type {
   ProviderDefinition,
+  ProviderFieldType,
+  ProviderSelectOption,
   SharedStorageTestResult,
   ProfileReference,
 } from "../../lib/types";
+
+function selectOptions(fieldType: ProviderFieldType): ProviderSelectOption[] | null {
+  return typeof fieldType === "object" && fieldType !== null ? fieldType.select.options : null;
+}
 
 interface Props {
   busy: boolean;
@@ -406,17 +412,18 @@ All data is encrypted before upload and can only be decrypted with your reposito
             />
 
             {staticCredentialFields.map((field) => {
-              if (typeof field.fieldType === "object" && field.fieldType !== null && "options" in field.fieldType) {
+              const options = selectOptions(field.fieldType);
+              if (options) {
                 return (
                   <label key={field.key} className="flex flex-col gap-2 text-base">
                     <span className="font-display text-[10px] uppercase tracking-[0.14em] text-[#9ad9ff]">{field.label}</span>
                     <select
                       className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.1rem] text-[#dff8ff] outline-none shadow-[inset_0_0_0_2px_#121731] focus:border-neon-cyan"
-                      value={formValues[field.key] || field.fieldType.options[0]?.value || ""}
+                      value={formValues[field.key] || options[0]?.value || ""}
                       onChange={(e) => handleFieldChange(field.key, e.currentTarget.value)}
                       disabled={busy}
                     >
-                      {field.fieldType.options.map((option) => (
+                      {options.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
@@ -530,17 +537,18 @@ All data is encrypted before upload and can only be decrypted with your reposito
                 type="password"
               />
               {oauthProviderFields.map((field) => {
-                if (typeof field.fieldType === "object" && field.fieldType !== null && "options" in field.fieldType) {
+                const options = selectOptions(field.fieldType);
+                if (options) {
                   return (
                     <label key={field.key} className="flex flex-col gap-2 text-base">
                       <span className="font-display text-[10px] uppercase tracking-[0.14em] text-[#9ad9ff]">{field.label}</span>
                       <select
                         className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.1rem] text-[#dff8ff] outline-none shadow-[inset_0_0_0_2px_#121731] focus:border-neon-cyan"
-                        value={formValues[field.key] || field.fieldType.options[0]?.value || ""}
+                        value={formValues[field.key] || options[0]?.value || ""}
                         onChange={(e) => handleFieldChange(field.key, e.currentTarget.value)}
                         disabled={busy}
                       >
-                        {field.fieldType.options.map((option) => (
+                        {options.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
