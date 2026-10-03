@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use tokio::fs;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     errors::{AppError, AppResult},
@@ -21,18 +24,516 @@ pub trait StateStore: Send + Sync {
     fn path(&self) -> &Path;
 }
 
+// ---------------------------------------------------------------------------
+// Secret fields of PersistedAppState
+//
+// Secrets (app password, Vast API key, Twitch client secret, Backblaze
+// application key, rclone crypt password) are kept in memory on
+// PersistedAppState so every reader and the frontend contract keep working,
+// but `JsonStateStore` never writes them to state.json when the OS credential
+// store (keyring) accepts them. Instead each stored secret is recorded in a
+// non-secret top-level marker object (`secretStorage`) so the next load knows
+// to hydrate it from the keyring.
+//
+// Migration: a state.json that still contains a plaintext secret is moved into
+// the keyring on the next save (which `load_state` performs immediately) and
+// the plaintext is removed from the file.
+//
+// Fallback: if the keyring is unavailable (e.g. headless Linux without a
+// Secret Service), the secret stays in state.json in plaintext so the app keeps
+// working, a warning is logged (never the secret itself) and migration is
+// retried on the next app start.
+// ---------------------------------------------------------------------------
+
+const SECRET_KEYRING_SERVICE: &str = "com.noland.connect.app-state";
+const SECRET_STORAGE_KEY: &str = "secretStorage";
+const SECRET_STORAGE_KEYRING: &str = "keyring";
+
+/// Minimal secret backend abstraction so the state store can be tested
+/// without touching the real OS credential store.
+pub trait SecretBackend: Send + Sync + fmt::Debug {
+    fn get(&self, account: &str) -> Result<Option<String>, String>;
+    fn set(&self, account: &str, value: &str) -> Result<(), String>;
+    fn delete(&self, account: &str) -> Result<(), String>;
+}
+
+/// OS credential store (macOS Keychain, Windows Credential Manager, Linux
+/// Secret Service) via the `keyring` crate.
+#[cfg_attr(test, allow(dead_code))]
+#[derive(Debug, Default)]
+pub struct OsKeyringSecretBackend;
+
+#[cfg_attr(test, allow(dead_code))]
+impl OsKeyringSecretBackend {
+    fn entry(account: &str) -> Result<keyring::Entry, String> {
+        keyring::Entry::new(SECRET_KEYRING_SERVICE, account).map_err(|error| error.to_string())
+    }
+}
+
+impl SecretBackend for OsKeyringSecretBackend {
+    fn get(&self, account: &str) -> Result<Option<String>, String> {
+        match Self::entry(account)?.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn set(&self, account: &str, value: &str) -> Result<(), String> {
+        let entry = Self::entry(account)?;
+        entry
+            .set_password(value)
+            .map_err(|error| error.to_string())?;
+        // Mirror the Cloudflare TURN pattern: only trust the write after the
+        // same entry reads back the same value (some platforms accept the
+        // write but redirect or drop it).
+        match entry.get_password() {
+            Ok(stored) if stored == value => Ok(()),
+            Ok(_) => Err("value read back from secure storage did not match".to_string()),
+            Err(error) => Err(format!("could not read back value: {error}")),
+        }
+    }
+
+    fn delete(&self, account: &str) -> Result<(), String> {
+        match Self::entry(account)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+/// In-memory backend used by tests.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub struct InMemorySecretBackend {
+    values: Mutex<HashMap<String, String>>,
+    unavailable: bool,
+}
+
+#[cfg(test)]
+impl InMemorySecretBackend {
+    /// A backend whose every operation fails, emulating a missing keyring.
+    pub fn unavailable() -> Self {
+        Self {
+            values: Mutex::new(HashMap::new()),
+            unavailable: true,
+        }
+    }
+
+    fn snapshot(&self) -> HashMap<String, String> {
+        self.values.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+impl SecretBackend for InMemorySecretBackend {
+    fn get(&self, account: &str) -> Result<Option<String>, String> {
+        if self.unavailable {
+            return Err("secure storage unavailable".to_string());
+        }
+        Ok(self
+            .values
+            .lock()
+            .map_err(|_| "poisoned".to_string())?
+            .get(account)
+            .cloned())
+    }
+
+    fn set(&self, account: &str, value: &str) -> Result<(), String> {
+        if self.unavailable {
+            return Err("secure storage unavailable".to_string());
+        }
+        self.values
+            .lock()
+            .map_err(|_| "poisoned".to_string())?
+            .insert(account.to_string(), value.to_string());
+        Ok(())
+    }
+
+    fn delete(&self, account: &str) -> Result<(), String> {
+        if self.unavailable {
+            return Err("secure storage unavailable".to_string());
+        }
+        self.values
+            .lock()
+            .map_err(|_| "poisoned".to_string())?
+            .remove(account);
+        Ok(())
+    }
+}
+
+struct SecretField {
+    /// Keyring account name and marker key in `secretStorage`.
+    account: &'static str,
+    /// camelCase JSON path inside the serialized PersistedAppState.
+    json_path: &'static [&'static str],
+    /// Whether the stripped JSON value is `null` (Option field) instead of "".
+    nullable: bool,
+    get: fn(&PersistedAppState) -> &str,
+    set: fn(&mut PersistedAppState, String),
+}
+
+fn get_app_password(state: &PersistedAppState) -> &str {
+    &state.credentials.app_password
+}
+fn set_app_password(state: &mut PersistedAppState, value: String) {
+    state.credentials.app_password = value;
+}
+fn get_vast_api_key(state: &PersistedAppState) -> &str {
+    &state.credentials.vast_api_key
+}
+fn set_vast_api_key(state: &mut PersistedAppState, value: String) {
+    state.credentials.vast_api_key = value;
+}
+fn get_twitch_client_secret(state: &PersistedAppState) -> &str {
+    &state.credentials.twitch_client_secret
+}
+fn set_twitch_client_secret(state: &mut PersistedAppState, value: String) {
+    state.credentials.twitch_client_secret = value;
+}
+fn get_backblaze_application_key(state: &PersistedAppState) -> &str {
+    &state.shared_storage.settings.backblaze_application_key
+}
+fn set_backblaze_application_key(state: &mut PersistedAppState, value: String) {
+    state.shared_storage.settings.backblaze_application_key = value;
+}
+fn get_crypt_password(state: &PersistedAppState) -> &str {
+    state
+        .shared_storage
+        .settings
+        .crypt_password
+        .as_deref()
+        .unwrap_or("")
+}
+fn set_crypt_password(state: &mut PersistedAppState, value: String) {
+    state.shared_storage.settings.crypt_password = (!value.is_empty()).then_some(value);
+}
+
+const SECRET_FIELDS: &[SecretField] = &[
+    SecretField {
+        account: "credentials.appPassword",
+        json_path: &["credentials", "appPassword"],
+        nullable: false,
+        get: get_app_password,
+        set: set_app_password,
+    },
+    SecretField {
+        account: "credentials.vastApiKey",
+        json_path: &["credentials", "vastApiKey"],
+        nullable: false,
+        get: get_vast_api_key,
+        set: set_vast_api_key,
+    },
+    SecretField {
+        account: "credentials.twitchClientSecret",
+        json_path: &["credentials", "twitchClientSecret"],
+        nullable: false,
+        get: get_twitch_client_secret,
+        set: set_twitch_client_secret,
+    },
+    SecretField {
+        account: "sharedStorage.settings.backblazeApplicationKey",
+        json_path: &["sharedStorage", "settings", "backblazeApplicationKey"],
+        nullable: false,
+        get: get_backblaze_application_key,
+        set: set_backblaze_application_key,
+    },
+    SecretField {
+        account: "sharedStorage.settings.cryptPassword",
+        json_path: &["sharedStorage", "settings", "cryptPassword"],
+        nullable: true,
+        get: get_crypt_password,
+        set: set_crypt_password,
+    },
+];
+
+/// What the store knows about a secret's location after load/save.
+/// A field missing from the cache is "unknown" and treated like `Unreadable`
+/// (never delete anything we have not confirmed).
+#[derive(Clone, PartialEq, Eq)]
+enum SecretSlot {
+    /// Nothing stored anywhere.
+    Absent,
+    /// Stored in the keyring with this value.
+    Stored(String),
+    /// Keyring write failed; this value is kept in plaintext in state.json.
+    Plaintext(String),
+    /// Marker says the keyring holds it, but it could not be read.
+    Unreadable,
+}
+
+impl fmt::Debug for SecretSlot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Never print secret values.
+        let name = match self {
+            Self::Absent => "Absent",
+            Self::Stored(_) => "Stored(<redacted>)",
+            Self::Plaintext(_) => "Plaintext(<redacted>)",
+            Self::Unreadable => "Unreadable",
+        };
+        f.write_str(name)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarkerAction {
+    Set,
+    Remove,
+    Keep,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SecretSaveDecision {
+    strip: bool,
+    marker: MarkerAction,
+}
+
+type SecretCache = Arc<Mutex<HashMap<&'static str, SecretSlot>>>;
+
+/// Synchronise in-memory secret values with the backend. Blocking: call via
+/// `spawn_blocking`.
+fn sync_secrets_for_save(
+    backend: &dyn SecretBackend,
+    cache: &SecretCache,
+    values: &[String],
+) -> Vec<SecretSaveDecision> {
+    let mut cache = match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    SECRET_FIELDS
+        .iter()
+        .zip(values)
+        .map(|(field, value)| {
+            let slot = cache.get(field.account).cloned();
+            if value.is_empty() {
+                return match slot {
+                    Some(SecretSlot::Stored(_)) => {
+                        if let Err(error) = backend.delete(field.account) {
+                            warn!(
+                                secret = field.account,
+                                %error,
+                                "Could not remove a cleared secret from secure storage"
+                            );
+                        }
+                        cache.insert(field.account, SecretSlot::Absent);
+                        SecretSaveDecision {
+                            strip: false,
+                            marker: MarkerAction::Remove,
+                        }
+                    }
+                    Some(SecretSlot::Absent) | Some(SecretSlot::Plaintext(_)) => {
+                        cache.insert(field.account, SecretSlot::Absent);
+                        SecretSaveDecision {
+                            strip: false,
+                            marker: MarkerAction::Remove,
+                        }
+                    }
+                    // Unknown or unreadable: the keyring may still hold the
+                    // real value; never drop the marker or delete it.
+                    Some(SecretSlot::Unreadable) | None => SecretSaveDecision {
+                        strip: false,
+                        marker: MarkerAction::Keep,
+                    },
+                };
+            }
+
+            match slot {
+                Some(SecretSlot::Stored(stored)) if &stored == value => SecretSaveDecision {
+                    strip: true,
+                    marker: MarkerAction::Set,
+                },
+                // Keyring already rejected this exact value this session;
+                // don't retry on every save (retried on next app start).
+                Some(SecretSlot::Plaintext(plain)) if &plain == value => SecretSaveDecision {
+                    strip: false,
+                    marker: MarkerAction::Remove,
+                },
+                previous => match backend.set(field.account, value) {
+                    Ok(()) => {
+                        if previous.is_none() {
+                            info!(
+                                secret = field.account,
+                                "Stored a secret in the OS credential store"
+                            );
+                        }
+                        cache.insert(field.account, SecretSlot::Stored(value.clone()));
+                        SecretSaveDecision {
+                            strip: true,
+                            marker: MarkerAction::Set,
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            secret = field.account,
+                            %error,
+                            "OS credential store unavailable; keeping this secret in state.json (plaintext fallback)"
+                        );
+                        cache.insert(field.account, SecretSlot::Plaintext(value.clone()));
+                        SecretSaveDecision {
+                            strip: false,
+                            marker: MarkerAction::Remove,
+                        }
+                    }
+                },
+            }
+        })
+        .collect()
+}
+
+/// Hydrate secrets that state.json says live in the keyring. Blocking.
+/// Returns the hydrated values per field (None = leave as loaded).
+fn hydrate_secrets_on_load(
+    backend: &dyn SecretBackend,
+    cache: &SecretCache,
+    loaded_values: &[String],
+    markers: &[bool],
+) -> Vec<Option<String>> {
+    let mut cache = match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    SECRET_FIELDS
+        .iter()
+        .zip(loaded_values.iter().zip(markers))
+        .map(|(field, (loaded, has_marker))| {
+            if !loaded.is_empty() {
+                // Plaintext still present in state.json: leave the cache unknown
+                // so the save that follows load migrates it into the keyring.
+                cache.remove(field.account);
+                return None;
+            }
+            if !has_marker {
+                cache.insert(field.account, SecretSlot::Absent);
+                return None;
+            }
+            match backend.get(field.account) {
+                Ok(Some(value)) => {
+                    cache.insert(field.account, SecretSlot::Stored(value.clone()));
+                    Some(value)
+                }
+                Ok(None) => {
+                    warn!(
+                        secret = field.account,
+                        "Secret marked as stored in secure storage was not found there"
+                    );
+                    cache.insert(field.account, SecretSlot::Absent);
+                    None
+                }
+                Err(error) => {
+                    warn!(
+                        secret = field.account,
+                        %error,
+                        "Could not read a secret from secure storage; it will be unavailable until the next successful load"
+                    );
+                    cache.insert(field.account, SecretSlot::Unreadable);
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn secret_markers(raw_root: &Value) -> Vec<bool> {
+    let markers = raw_root.get(SECRET_STORAGE_KEY);
+    SECRET_FIELDS
+        .iter()
+        .map(|field| {
+            markers
+                .and_then(|value| value.get(field.account))
+                .and_then(Value::as_str)
+                == Some(SECRET_STORAGE_KEYRING)
+        })
+        .collect()
+}
+
+fn strip_secret_from_json(root: &mut Value, field: &SecretField) {
+    let Some((last, parents)) = field.json_path.split_last() else {
+        return;
+    };
+    let mut cursor = root;
+    for segment in parents {
+        match cursor.get_mut(*segment) {
+            Some(next) => cursor = next,
+            None => return,
+        }
+    }
+    if let Value::Object(map) = cursor {
+        if map.contains_key(*last) {
+            let replacement = if field.nullable {
+                Value::Null
+            } else {
+                Value::String(String::new())
+            };
+            map.insert((*last).to_string(), replacement);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct JsonStateStore {
     state_path: PathBuf,
     current_version: u32,
+    secret_backend: Arc<dyn SecretBackend>,
+    secret_cache: SecretCache,
 }
 
 impl JsonStateStore {
     pub fn new(state_path: PathBuf, current_version: u32) -> Self {
+        // Unit tests must never touch the developer's real OS keyring.
+        #[cfg(test)]
+        let backend: Arc<dyn SecretBackend> = Arc::new(InMemorySecretBackend::default());
+        #[cfg(not(test))]
+        let backend: Arc<dyn SecretBackend> = Arc::new(OsKeyringSecretBackend);
+        Self::with_secret_backend(state_path, current_version, backend)
+    }
+
+    pub fn with_secret_backend(
+        state_path: PathBuf,
+        current_version: u32,
+        secret_backend: Arc<dyn SecretBackend>,
+    ) -> Self {
         Self {
             state_path,
             current_version,
+            secret_backend,
+            secret_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn mark_all_secrets_absent(&self) {
+        let mut cache = match self.secret_cache.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for field in SECRET_FIELDS {
+            cache.insert(field.account, SecretSlot::Absent);
+        }
+    }
+
+    async fn hydrate_secrets(
+        &self,
+        state: &mut PersistedAppState,
+        raw_root: &Value,
+    ) -> AppResult<()> {
+        let markers = secret_markers(raw_root);
+        let loaded: Vec<String> = SECRET_FIELDS
+            .iter()
+            .map(|field| (field.get)(state).to_string())
+            .collect();
+        let backend = self.secret_backend.clone();
+        let cache = self.secret_cache.clone();
+        let hydrated = tokio::task::spawn_blocking(move || {
+            hydrate_secrets_on_load(backend.as_ref(), &cache, &loaded, &markers)
+        })
+        .await
+        .map_err(|error| AppError::State(format!("Secret hydration task failed: {error}")))?;
+        for (field, value) in SECRET_FIELDS.iter().zip(hydrated) {
+            if let Some(value) = value {
+                (field.set)(state, value);
+            }
+        }
+        Ok(())
     }
 
     async fn ensure_parent_exists(&self) -> AppResult<()> {
@@ -103,6 +604,7 @@ impl JsonStateStore {
         );
 
         let state = PersistedAppState::default();
+        self.mark_all_secrets_absent();
         self.save_state(&state).await?;
         Ok(state)
     }
@@ -136,7 +638,10 @@ impl StateStore for JsonStateStore {
         self.ensure_parent_exists().await?;
 
         if !self.state_path.exists() {
+            // A fresh (or reset) state starts without secrets; stale keyring
+            // entries are ignored because no `secretStorage` marker exists.
             let state = PersistedAppState::default();
+            self.mark_all_secrets_absent();
             self.save_state(&state).await?;
             return Ok(state);
         }
@@ -153,13 +658,17 @@ impl StateStore for JsonStateStore {
             }
         };
 
-        let migrated = match self.migrate_value(raw_value) {
+        let raw_root = raw_value.clone();
+        let mut migrated = match self.migrate_value(raw_value) {
             Ok(state) => state,
             Err(error @ AppError::Serialization(_)) => {
                 return self.recover_invalid_state(&error).await;
             }
             Err(error) => return Err(error),
         };
+        // Hydrate keyring-held secrets; plaintext secrets still present in
+        // state.json are migrated into the keyring by the save below.
+        self.hydrate_secrets(&mut migrated, &raw_root).await?;
         self.save_state(&migrated).await?;
         Ok(migrated)
     }
@@ -173,7 +682,25 @@ impl StateStore for JsonStateStore {
             Err(error) => return Err(error),
         };
 
-        let next_value = serde_json::to_value(state)?;
+        let mut next_value = serde_json::to_value(state)?;
+
+        let secret_values: Vec<String> = SECRET_FIELDS
+            .iter()
+            .map(|field| (field.get)(state).to_string())
+            .collect();
+        let backend = self.secret_backend.clone();
+        let cache = self.secret_cache.clone();
+        let decisions = tokio::task::spawn_blocking(move || {
+            sync_secrets_for_save(backend.as_ref(), &cache, &secret_values)
+        })
+        .await
+        .map_err(|error| AppError::State(format!("Secret storage task failed: {error}")))?;
+        for (field, decision) in SECRET_FIELDS.iter().zip(&decisions) {
+            if decision.strip {
+                strip_secret_from_json(&mut next_value, field);
+            }
+        }
+
         let next_map = match next_value {
             Value::Object(map) => map,
             _ => {
@@ -185,6 +712,28 @@ impl StateStore for JsonStateStore {
 
         for (key, value) in next_map {
             root_map.insert(key, value);
+        }
+
+        let mut markers = match root_map.remove(SECRET_STORAGE_KEY) {
+            Some(Value::Object(map)) => map,
+            _ => Map::new(),
+        };
+        for (field, decision) in SECRET_FIELDS.iter().zip(&decisions) {
+            match decision.marker {
+                MarkerAction::Set => {
+                    markers.insert(
+                        field.account.to_string(),
+                        Value::String(SECRET_STORAGE_KEYRING.to_string()),
+                    );
+                }
+                MarkerAction::Remove => {
+                    markers.remove(field.account);
+                }
+                MarkerAction::Keep => {}
+            }
+        }
+        if !markers.is_empty() {
+            root_map.insert(SECRET_STORAGE_KEY.to_string(), Value::Object(markers));
         }
 
         let body = serde_json::to_vec_pretty(&Value::Object(root_map))?;
@@ -248,11 +797,12 @@ fn reconcile_json(target: &mut Value, source: &Value) {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use serde_json::json;
     use tokio::fs;
 
-    use super::{JsonStateStore, StateStore};
+    use super::{InMemorySecretBackend, JsonStateStore, StateStore};
     use crate::models::app_state::{
         ConnectionProvider, OrchestrationState, PersistedAppState, ProvisionedServerState,
         TransportKind, WireGuardSetupStatus,
@@ -401,6 +951,176 @@ mod tests {
             PersistedAppState::default().server_preferences.storage_gb
         );
         assert_eq!(recovered.server_preferences.template_hash, "abc123");
+    }
+
+    fn read_root(path: &std::path::Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    fn state_with_secrets() -> PersistedAppState {
+        let mut state = PersistedAppState::default();
+        state.credentials.app_username = "felipe".to_string();
+        state.credentials.app_password = "app-secret".to_string();
+        state.credentials.vast_api_key = "vast-secret".to_string();
+        state.credentials.twitch_client_secret = "twitch-secret".to_string();
+        state.shared_storage.settings.backblaze_application_key = "b2-secret".to_string();
+        state.shared_storage.settings.crypt_password = Some("crypt-secret".to_string());
+        state
+    }
+
+    fn assert_no_secret_in_file(path: &std::path::Path) {
+        let raw = std::fs::read_to_string(path).unwrap();
+        for secret in [
+            "app-secret",
+            "vast-secret",
+            "twitch-secret",
+            "b2-secret",
+            "crypt-secret",
+        ] {
+            assert!(!raw.contains(secret), "{secret} leaked into state.json");
+        }
+    }
+
+    #[tokio::test]
+    async fn secrets_are_kept_out_of_state_json_and_hydrated_from_keyring() {
+        let path = temp_state_path("secrets-roundtrip");
+        let _ = std::fs::remove_file(&path);
+        let backend = Arc::new(InMemorySecretBackend::default());
+        let store = JsonStateStore::with_secret_backend(path.clone(), 3, backend.clone());
+        store.load_state().await.unwrap();
+
+        let state = state_with_secrets();
+        // In-memory serialization (sent to the frontend) still carries values.
+        let in_memory = serde_json::to_value(&state).unwrap();
+        assert_eq!(in_memory["credentials"]["vastApiKey"], "vast-secret");
+
+        store.save_state(&state).await.unwrap();
+        assert_no_secret_in_file(&path);
+        let root = read_root(&path);
+        assert_eq!(root["credentials"]["appUsername"], "felipe");
+        assert_eq!(root["credentials"]["vastApiKey"], "");
+        assert!(root["sharedStorage"]["settings"]["cryptPassword"].is_null());
+        assert_eq!(root["secretStorage"]["credentials.vastApiKey"], "keyring");
+        assert_eq!(
+            backend
+                .snapshot()
+                .get("credentials.appPassword")
+                .map(String::as_str),
+            Some("app-secret")
+        );
+
+        // A fresh store (new app start) hydrates from the keyring.
+        let reopened = JsonStateStore::with_secret_backend(path.clone(), 3, backend.clone());
+        let loaded = reopened.load_state().await.unwrap();
+        assert_eq!(loaded.credentials.app_password, "app-secret");
+        assert_eq!(loaded.credentials.vast_api_key, "vast-secret");
+        assert_eq!(loaded.credentials.twitch_client_secret, "twitch-secret");
+        assert_eq!(
+            loaded.shared_storage.settings.backblaze_application_key,
+            "b2-secret"
+        );
+        assert_eq!(
+            loaded.shared_storage.settings.crypt_password.as_deref(),
+            Some("crypt-secret")
+        );
+        assert_no_secret_in_file(&path);
+
+        // Clearing a secret removes it from the keyring and the marker.
+        let mut cleared = loaded.clone();
+        cleared.credentials.vast_api_key.clear();
+        reopened.save_state(&cleared).await.unwrap();
+        assert!(!backend.snapshot().contains_key("credentials.vastApiKey"));
+        assert!(read_root(&path)["secretStorage"]
+            .get("credentials.vastApiKey")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn plaintext_secrets_are_migrated_into_keyring_on_load() {
+        let path = temp_state_path("secrets-migrate");
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "version": 3,
+                "onboardingCompleted": true,
+                "credentials": {
+                    "appUsername": "felipe",
+                    "appPassword": "app-secret",
+                    "vastApiKey": "vast-secret"
+                }
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let backend = Arc::new(InMemorySecretBackend::default());
+        let store = JsonStateStore::with_secret_backend(path.clone(), 3, backend.clone());
+        let loaded = store.load_state().await.unwrap();
+
+        assert_eq!(loaded.credentials.app_password, "app-secret");
+        assert_eq!(loaded.credentials.vast_api_key, "vast-secret");
+        assert_no_secret_in_file(&path);
+        let stored = backend.snapshot();
+        assert_eq!(
+            stored.get("credentials.vastApiKey").map(String::as_str),
+            Some("vast-secret")
+        );
+        assert_eq!(
+            stored.get("credentials.appPassword").map(String::as_str),
+            Some("app-secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_keyring_falls_back_to_plaintext() {
+        let path = temp_state_path("secrets-fallback");
+        let _ = std::fs::remove_file(&path);
+        let backend = Arc::new(InMemorySecretBackend::unavailable());
+        let store = JsonStateStore::with_secret_backend(path.clone(), 3, backend);
+        store.load_state().await.unwrap();
+        store.save_state(&state_with_secrets()).await.unwrap();
+
+        let root = read_root(&path);
+        assert_eq!(root["credentials"]["vastApiKey"], "vast-secret");
+        assert!(root.get("secretStorage").is_none());
+
+        let reopened = JsonStateStore::with_secret_backend(
+            path.clone(),
+            3,
+            Arc::new(InMemorySecretBackend::unavailable()),
+        );
+        let loaded = reopened.load_state().await.unwrap();
+        assert_eq!(loaded.credentials.vast_api_key, "vast-secret");
+    }
+
+    #[tokio::test]
+    async fn unreadable_keyring_does_not_drop_secret_marker() {
+        let path = temp_state_path("secrets-unreadable");
+        let _ = std::fs::remove_file(&path);
+        let backend = Arc::new(InMemorySecretBackend::default());
+        let store = JsonStateStore::with_secret_backend(path.clone(), 3, backend.clone());
+        store.load_state().await.unwrap();
+        store.save_state(&state_with_secrets()).await.unwrap();
+
+        // Next start: keyring temporarily unavailable.
+        let broken = JsonStateStore::with_secret_backend(
+            path.clone(),
+            3,
+            Arc::new(InMemorySecretBackend::unavailable()),
+        );
+        let loaded = broken.load_state().await.unwrap();
+        assert!(loaded.credentials.vast_api_key.is_empty());
+        broken.save_state(&loaded).await.unwrap();
+        assert_eq!(
+            read_root(&path)["secretStorage"]["credentials.vastApiKey"],
+            "keyring"
+        );
+
+        // Keyring back: secret is recovered.
+        let healed = JsonStateStore::with_secret_backend(path.clone(), 3, backend);
+        let loaded = healed.load_state().await.unwrap();
+        assert_eq!(loaded.credentials.vast_api_key, "vast-secret");
     }
 
     #[tokio::test]
