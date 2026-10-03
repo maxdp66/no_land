@@ -6,7 +6,7 @@ import {
 } from "@tauri-apps/plugin-notification";
 import { playArcadeSuccess } from "../lib/arcadeAudio";
 import { isNotificationEnabled } from "../lib/notificationPreferences";
-import { notifyProvisioningUpdate } from "../lib/provisioningNotifications";
+import { handleProvisioningEventNotification } from "../lib/provisioningNotifications";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   completeOnboarding,
@@ -571,20 +571,12 @@ async function applyProvisioningEventState(
     partial: Partial<AppStore> | ((state: AppStore) => Partial<AppStore>),
   ) => void,
 ): Promise<void> {
-  const needsUserAttention =
-    event.isError ||
-    event.state === "WireGuardConfigGenerated" ||
-    event.state === "WireGuardWaitingForActivation" ||
-    event.state === "WireGuardConnected" ||
-    event.state === "AwaitingPairPin";
-  const provisioningFinished = event.state === "Ready" && !event.isError;
-  if (needsUserAttention || provisioningFinished) {
-    void notifyProvisioningUpdate(
-      provisioningFinished ? "complete" : "attention",
-      provisioningFinished ? "Your instance is ready to use." : event.message,
-      event.details,
-    );
-  }
+  const currentAppState = useAppStore.getState().appState;
+  handleProvisioningEventNotification(
+    event,
+    currentAppState?.postWireguardSetup?.currentInstanceId ??
+      currentAppState?.instance?.instanceId,
+  );
 
   let latestPostWireguardSetup: PostWireGuardSetupState | null = null;
   let latestAppState: PersistedAppState | null = null;
