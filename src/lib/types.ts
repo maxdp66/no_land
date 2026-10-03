@@ -944,7 +944,8 @@ export type ProviderFieldType =
   | "password"
   | "number"
   | "toggle"
-  | { options: ProviderSelectOption[] };
+  // Serde's externally tagged form of the Rust `Select { options }` variant.
+  | { select: { options: ProviderSelectOption[] } };
 
 export interface ProviderField {
   key: string;
