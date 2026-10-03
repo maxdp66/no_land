@@ -402,6 +402,8 @@ function BootScreen() {
 }
 
 const AUTO_GITHUB_ISSUES_STORAGE_KEY = "noland.autoGithubIssues";
+// Matches the "Remind me every three hours" notification setting.
+const UNATTENDED_INSTANCE_REMINDER_INTERVAL_MS = 3 * 60 * 60 * 1000;
 
 function CloseWithInstancesModal({
   instances,
@@ -456,7 +458,10 @@ export function App() {
   const [deletingBeforeClose, setDeletingBeforeClose] = useState(false);
   const [closeGuardError, setCloseGuardError] = useState<string | null>(null);
   const allowWindowCloseRef = useRef(false);
-  const attentionNotificationAtRef = useRef<number | null>(null);
+  // Unattended-instance reminder bookkeeping: when rented instances first
+  // became unattended (no active stream), and when we last reminded.
+  const unattendedSinceRef = useRef<number | null>(null);
+  const lastAttentionReminderAtRef = useRef<number | null>(null);
   const [autoGithubIssuesEnabled, setAutoGithubIssuesEnabled] = useState(() => {
     try {
       return window.localStorage.getItem(AUTO_GITHUB_ISSUES_STORAGE_KEY) === "true";
@@ -604,14 +609,20 @@ export function App() {
     };
   }, [loading, rentedInstances.length, windowLabel, windowLabelResolved]);
 
+  const rentedInstanceCount = rentedInstances.length;
+  const hasEmbeddedActiveStream =
+    embeddedMoonlightStatus?.videoSessionActive === true ||
+    rentedInstances.some((instance) => instance.embeddedMoonlightVideoSessionActive === true);
+  const rentedInstanceCountRef = useRef(rentedInstanceCount);
+  rentedInstanceCountRef.current = rentedInstanceCount;
+  const hasEmbeddedActiveStreamRef = useRef(hasEmbeddedActiveStream);
+  hasEmbeddedActiveStreamRef.current = hasEmbeddedActiveStream;
+
   useEffect(() => {
     if (!windowLabelResolved || windowLabel !== "main" || loading || !isRunningInTauri()) {
       return;
     }
 
-    const hasEmbeddedActiveStream =
-      embeddedMoonlightStatus?.videoSessionActive === true ||
-      rentedInstances.some((instance) => instance.embeddedMoonlightVideoSessionActive === true);
     const activeSessionStates = new Set([
       "preparing",
       "launching",
@@ -622,46 +633,66 @@ export function App() {
       "stopping",
     ]);
     let checking = false;
+    let disposed = false;
 
     const checkForInstancesNeedingAttention = async () => {
       if (checking) {
         return;
       }
       checking = true;
-      let hasNativeActiveStream = false;
       try {
-        const session = await moonlightGetSessionState();
-        hasNativeActiveStream = activeSessionStates.has(session.state);
-      } catch {
-        // Avoid a false billing warning when native stream state cannot be read.
-        checking = false;
-        return;
-      }
+        if (rentedInstanceCountRef.current === 0 || hasEmbeddedActiveStreamRef.current) {
+          unattendedSinceRef.current = null;
+          lastAttentionReminderAtRef.current = null;
+          return;
+        }
 
-      if (rentedInstances.length === 0 || hasEmbeddedActiveStream || hasNativeActiveStream) {
-        attentionNotificationAtRef.current = null;
-        checking = false;
-        return;
-      }
+        let hasNativeActiveStream = false;
+        try {
+          const session = await moonlightGetSessionState();
+          hasNativeActiveStream = activeSessionStates.has(session.state);
+        } catch {
+          // Avoid a false billing warning when native stream state cannot be read.
+          return;
+        }
+        if (disposed) {
+          return;
+        }
 
-      const now = Date.now();
-      if (
-        attentionNotificationAtRef.current === null ||
-        now - attentionNotificationAtRef.current >= 3 * 60 * 60 * 1000
-      ) {
-        attentionNotificationAtRef.current = now;
-        void notifyInstancesNeedAttention(rentedInstances.length);
+        const instanceCount = rentedInstanceCountRef.current;
+        if (instanceCount === 0 || hasEmbeddedActiveStreamRef.current || hasNativeActiveStream) {
+          unattendedSinceRef.current = null;
+          lastAttentionReminderAtRef.current = null;
+          return;
+        }
+
+        // Only remind after instances have been unattended for a full
+        // interval, then once per interval while that remains true.
+        const now = Date.now();
+        if (unattendedSinceRef.current === null) {
+          unattendedSinceRef.current = now;
+          return;
+        }
+        const reference = lastAttentionReminderAtRef.current ?? unattendedSinceRef.current;
+        if (now - reference >= UNATTENDED_INSTANCE_REMINDER_INTERVAL_MS) {
+          lastAttentionReminderAtRef.current = now;
+          void notifyInstancesNeedAttention(instanceCount);
+        }
+      } finally {
+        checking = false;
       }
-      checking = false;
     };
 
     void checkForInstancesNeedingAttention();
     const interval = window.setInterval(() => void checkForInstancesNeedingAttention(), 60 * 1000);
-    return () => window.clearInterval(interval);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
   }, [
-    embeddedMoonlightStatus?.videoSessionActive,
+    hasEmbeddedActiveStream,
     loading,
-    rentedInstances,
+    rentedInstanceCount,
     windowLabel,
     windowLabelResolved,
   ]);

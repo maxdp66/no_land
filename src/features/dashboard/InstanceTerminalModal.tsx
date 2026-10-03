@@ -35,8 +35,15 @@ export function InstanceTerminalModal({ instance, onClose }: Props) {
     instance ? "connecting" : "error",
   );
 
+  // The parent passes a store-derived object that is re-created on every
+  // refresh. Key the connection on stable primitives so an equal-but-new
+  // instance object does not tear down and reconnect the SSH session.
+  const instanceId = instance?.instanceId ?? null;
+  const sshHost = instance?.sshHost ?? null;
+  const sshPort = instance?.sshPort ?? null;
+
   useEffect(() => {
-    if (!instance || !hostRef.current) return;
+    if (!instanceId || !hostRef.current) return;
 
     let disposed = false;
     const earlyOutput: TerminalOutputEvent[] = [];
@@ -77,7 +84,7 @@ export function InstanceTerminalModal({ instance, onClose }: Props) {
     terminal.open(hostRef.current);
     fitAddon.fit();
     terminal.writeln("\x1b[36mNOLAND REMOTE TERMINAL\x1b[0m");
-    terminal.writeln(`Connecting to ${instance.sshHost}:${instance.sshPort}...\r\n`);
+    terminal.writeln(`Connecting to ${sshHost}:${sshPort}...\r\n`);
 
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
@@ -123,7 +130,7 @@ export function InstanceTerminalModal({ instance, onClose }: Props) {
       }
     });
 
-    void openRemoteTerminal(instance.instanceId)
+    void openRemoteTerminal(instanceId)
       .then((session) => {
         if (disposed) {
           void closeRemoteTerminal(session.sessionId);
@@ -157,7 +164,7 @@ export function InstanceTerminalModal({ instance, onClose }: Props) {
       resizeObserver.disconnect();
       terminal.dispose();
     };
-  }, [instance]);
+  }, [instanceId, sshHost, sshPort]);
 
   return (
     <ModalFrame panelClassName="glass-panel pixel-frame max-w-5xl">

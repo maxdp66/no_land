@@ -25,6 +25,8 @@ use crate::{
 use super::{
     app_context::{AppContext, OrchestrationStartRequest},
     audio_latency::AudioLatencyService,
+    cloudflare_turn,
+    connection_manager::{automatic_selection_enabled, ConnectionManager},
     health_check::run_system_health_report,
     instance_manager::InstanceManager,
     lifecycle_agent::LifecycleAgentProvisioner,
@@ -77,6 +79,47 @@ async fn provision_lifecycle_agent(
         &settings,
     )
     .await
+}
+
+async fn turn_credentials_configured(context: &AppContext) -> bool {
+    let enabled = context.load_state().await.cloudflare_turn.enabled;
+    if !enabled {
+        return false;
+    }
+    tokio::task::spawn_blocking(cloudflare_turn::load_secret)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+        .is_some()
+}
+
+/// Optional post-provisioning transport evaluation. Runs after the WireGuard
+/// mutation guard has been released: `evaluate_runtime` only takes the
+/// network allocation lock, while an automatic switch also acquires the
+/// mutation guard and would fail if orchestration still held it. Failures are
+/// non-fatal because Direct WireGuard is already usable at this point.
+async fn evaluate_connection_after_provisioning(context: &AppContext, instance_id: u64) {
+    if turn_credentials_configured(context).await {
+        if let Err(error) = ConnectionManager::evaluate_runtime(context, instance_id).await {
+            warn!(
+                instance_id,
+                %error,
+                "Optional TURN allocation/probing failed; Direct WireGuard remains usable"
+            );
+        }
+    }
+    if automatic_selection_enabled() {
+        if let Err(error) =
+            ConnectionManager::evaluate_and_apply_automatic(context, instance_id).await
+        {
+            warn!(
+                instance_id,
+                %error,
+                "Direct WireGuard is ready; optional TURN provisioning evaluation failed"
+            );
+        }
+    }
 }
 
 async fn persist_direct_network_metadata(
@@ -1577,6 +1620,7 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
         &wireguard_result.client_config_path,
     )
     .await?;
+    evaluate_connection_after_provisioning(&context, instance.id).await;
 
     Ok(())
 }
@@ -2439,8 +2483,11 @@ async fn run_existing_instance_orchestration(
 
         result
     };
-    // Release the provisioning mutation lock before the remaining existing-
-    // instance setup and connection-manager evaluation stages.
+    // The mutation guard protects remote WireGuard configuration only. Release
+    // it before direct-network persistence, post-WireGuard initialization, and
+    // the connection-manager evaluation at the end of this function: an
+    // automatic transport switch acquires the same guard and would otherwise
+    // fail with "managed tunnel operation is already running".
     drop(_wireguard_mutation_guard);
     persist_direct_network_metadata(
         &context,
@@ -2564,6 +2611,7 @@ async fn run_existing_instance_orchestration(
         &wireguard_result.client_config_path,
     )
     .await?;
+    evaluate_connection_after_provisioning(&context, instance.id).await;
 
     Ok(())
 }

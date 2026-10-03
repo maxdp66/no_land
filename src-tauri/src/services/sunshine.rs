@@ -8,7 +8,7 @@ use crate::errors::{AppError, AppResult};
 use super::{
     app_config::SunshineDefaults,
     display_profile::{common_mode_catalog, DisplayModeSpec},
-    remote_exec::RemoteExec,
+    remote_exec::{nul_delimited_stdin, RemoteExec},
 };
 
 const HEADLESS_EDID_TEMPLATE_BASE64: &str =
@@ -1646,19 +1646,15 @@ echo "=== Setup Complete ==="
         sunshine_username: &str,
         sunshine_password: &str,
     ) -> AppResult<()> {
-        let escaped_username = shell_single_quote_escape(sunshine_username);
-        let escaped_password = shell_single_quote_escape(sunshine_password);
-        let set_creds_command = format!(
-            "sudo -u {target_user} bash -lc 'sunshine --creds '\''{escaped_username}'\'' '\''{escaped_password}'\'''",
-            target_user = target_user,
-            escaped_username = escaped_username,
-            escaped_password = escaped_password,
-        );
+        // Credentials travel over the SSH channel's stdin (NUL-delimited), never
+        // on the command line, so they cannot end up in local logs or reports.
+        let set_creds_command = sunshine_set_creds_command(target_user);
+        let set_creds_input = nul_delimited_stdin(&[sunshine_username, sunshine_password])?;
 
         let set_creds = {
             let remote = remote.clone();
             tokio::task::spawn_blocking(move || {
-                remote.ssh(&set_creds_command, Duration::from_secs(30))
+                remote.ssh_with_stdin(&set_creds_command, set_creds_input, Duration::from_secs(30))
             })
             .await
             .map_err(|error| AppError::Command(format!("join failure: {error}")))??
@@ -1672,15 +1668,13 @@ echo "=== Setup Complete ==="
             )));
         }
 
-        let verify_command = format!(
-            "curl -k -sS --connect-timeout 10 -u '\''{escaped_username}'\'':'\''{escaped_password}'\'' https://localhost:47990/api/config >/dev/null && echo CREDS_OK || echo CREDS_FAIL",
-            escaped_username = escaped_username,
-            escaped_password = escaped_password,
-        );
+        // curl reads `user = "name:pass"` from a config fed on stdin (`-K -`).
+        let verify_command = "curl -k -sS --connect-timeout 10 -K - https://localhost:47990/api/config >/dev/null && echo CREDS_OK || echo CREDS_FAIL";
+        let verify_input = curl_user_config(sunshine_username, sunshine_password).into_bytes();
         let verify = {
             let remote = remote.clone();
             tokio::task::spawn_blocking(move || {
-                remote.ssh(&verify_command, Duration::from_secs(30))
+                remote.ssh_with_stdin(verify_command, verify_input, Duration::from_secs(30))
             })
             .await
             .map_err(|error| AppError::Command(format!("join failure: {error}")))??
@@ -2303,6 +2297,53 @@ context.properties = {
     }
 }
 
+/// Remote command that reads the Sunshine web username and password from stdin
+/// (NUL-delimited, see `nul_delimited_stdin`) and applies them as `target_user`.
+/// `sudo -u` and `bash -c` both pass the SSH channel's stdin through.
+pub(crate) fn sunshine_set_creds_command(target_user: &str) -> String {
+    format!(
+        "sudo -u {} bash -lc 'IFS= read -r -d \"\" u && IFS= read -r -d \"\" p && exec sunshine --creds \"$u\" \"$p\"'",
+        crate::utils::shell::quote(target_user)
+    )
+}
+
+/// curl config (for `curl -K -`) carrying basic-auth credentials.
+pub(crate) fn curl_user_config(username: &str, password: &str) -> String {
+    let mut quoted = String::new();
+    for c in format!("{username}:{password}").chars() {
+        match c {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            other => quoted.push(other),
+        }
+    }
+    format!("user = \"{quoted}\"\n")
+}
+
 fn shell_single_quote_escape(content: &str) -> String {
     content.replace('\'', "'\"'\"'")
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::{curl_user_config, sunshine_set_creds_command};
+
+    #[test]
+    fn set_creds_command_contains_no_secrets_and_reads_stdin() {
+        let command = sunshine_set_creds_command("user");
+        assert!(command.starts_with("sudo -u 'user' bash -lc '"));
+        assert!(command.contains("read -r -d \"\" u"));
+        assert!(command.contains("sunshine --creds \"$u\" \"$p\""));
+    }
+
+    #[test]
+    fn curl_user_config_escapes_quotes_and_backslashes() {
+        assert_eq!(
+            curl_user_config("admin", "p\"a\\ss\nx"),
+            "user = \"admin:p\\\"a\\\\ss\\nx\"\n"
+        );
+    }
 }

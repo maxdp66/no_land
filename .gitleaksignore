@@ -1,0 +1,6 @@
+# Fake credentials in redaction unit-test fixtures (commit 515aee9); the fixtures
+# are now assembled at runtime so later commits no longer match.
+515aee9d3bc9f377c27b47b401d368dffe7e000e:src-tauri/src/services/diagnostics.rs:curl-auth-user:124
+515aee9d3bc9f377c27b47b401d368dffe7e000e:src-tauri/src/services/diagnostics.rs:curl-auth-user:125
+515aee9d3bc9f377c27b47b401d368dffe7e000e:src-tauri/src/services/remote_exec.rs:curl-auth-user:1037
+515aee9d3bc9f377c27b47b401d368dffe7e000e:src-tauri/src/services/remote_exec.rs:curl-auth-user:1041

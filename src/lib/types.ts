@@ -790,6 +790,8 @@ export interface DiagnosticReportResponse {
   path: string;
   summary: string;
   reportMarkdown: string;
+  /** Health report embedded in reportMarkdown (source of truth for summaries). */
+  health?: SystemHealthReport | null;
 }
 
 export interface MoonlightCodecSupport {

@@ -18,6 +18,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
+use crate::utils::shell;
 
 use super::remote_exec::{ExecOutput, RemoteExec};
 
@@ -144,16 +145,16 @@ printf '%s  %s\n' {archive_sha256} {root_archive} | sha256sum -c -
 printf '%s  %s\n' {installer_sha256} {root_installer} | sha256sum -c -
 chmod 0700 {root_installer}
 {root_installer} {root_archive} {remote_build} {expected_revision} {instance_id}"#,
-            root_staging = shell_single_quote(&root_staging),
-            remote_archive = shell_single_quote(&remote_archive),
-            remote_installer = shell_single_quote(&remote_installer),
-            root_archive = shell_single_quote(&root_archive),
-            root_installer = shell_single_quote(&root_installer),
-            remote_build = shell_single_quote(&remote_build),
-            archive_sha256 = shell_single_quote(&archive_sha256),
-            installer_sha256 = shell_single_quote(&installer_sha256),
-            expected_revision = shell_single_quote(&expected_revision),
-            instance_id = shell_single_quote(&instance_id.to_string()),
+            root_staging = shell::quote(&root_staging),
+            remote_archive = shell::quote(&remote_archive),
+            remote_installer = shell::quote(&remote_installer),
+            root_archive = shell::quote(&root_archive),
+            root_installer = shell::quote(&root_installer),
+            remote_build = shell::quote(&remote_build),
+            archive_sha256 = shell::quote(&archive_sha256),
+            installer_sha256 = shell::quote(&installer_sha256),
+            expected_revision = shell::quote(&expected_revision),
+            instance_id = shell::quote(&instance_id.to_string()),
         );
         let output = run_root_script(remote, install_script, Duration::from_secs(30 * 60)).await?;
         if output.status_code != 0 {
@@ -262,14 +263,14 @@ fi
 if [[ "$changed" -eq 1 ]] && systemctl is-active --quiet {service}; then
     systemctl restart {service}
 fi"#,
-        source = shell_single_quote(&remote_path),
-        directory = shell_single_quote(
+        source = shell::quote(&remote_path),
+        directory = shell::quote(
             Path::new(CONTROL_SECRET_PATH)
                 .parent()
                 .and_then(Path::to_str)
                 .unwrap_or("/etc/noland-network-agent")
         ),
-        destination = shell_single_quote(CONTROL_SECRET_PATH),
+        destination = shell::quote(CONTROL_SECRET_PATH),
         service = AGENT_SERVICE,
     );
     let output = run_root_script(remote, script, Duration::from_secs(60)).await?;
@@ -328,8 +329,8 @@ else
 fi"#,
         binary = AGENT_BINARY_PATH,
         revision_path = AGENT_REVISION_PATH,
-        expected_version = shell_single_quote(&expected_version_output),
-        expected_revision = shell_single_quote(expected_revision),
+        expected_version = shell::quote(&expected_version_output),
+        expected_revision = shell::quote(expected_revision),
         service = AGENT_SERVICE,
     );
     let output = run_root_script(remote, script, Duration::from_secs(45)).await?;
@@ -349,9 +350,9 @@ async fn run_root_script(
     timeout: Duration,
 ) -> AppResult<ExecOutput> {
     let command = if remote.is_root() {
-        format!("bash -lc {}", shell_single_quote(&script))
+        format!("bash -lc {}", shell::quote(&script))
     } else {
-        format!("sudo -n bash -lc {}", shell_single_quote(&script))
+        format!("sudo -n bash -lc {}", shell::quote(&script))
     };
     let remote = remote.clone();
     tokio::task::spawn_blocking(move || remote.ssh(&command, timeout))
@@ -849,10 +850,6 @@ fn create_install_script(staging_dir: &Path) -> AppResult<PathBuf> {
     })?;
     set_owner_only_file_permissions(&path)?;
     Ok(path)
-}
-
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn concise_remote_failure(output: &ExecOutput) -> String {

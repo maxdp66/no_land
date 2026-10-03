@@ -419,6 +419,19 @@ impl InstanceLifecycleService {
 
             vast.destroy_instance(instance_id).await?;
 
+            // Vast may hand this host:port to a different machine later; drop its SSH host key pin.
+            let ssh_endpoint = {
+                let state = context.state.read().await;
+                state
+                    .provisioned_servers
+                    .iter()
+                    .find(|record| record.instance_id == instance_id)
+                    .map(|record| (record.ssh_host.clone(), record.ssh_port))
+            };
+            if let Some((ssh_host, ssh_port)) = ssh_endpoint {
+                crate::services::remote_exec::forget_host_keys(&[&ssh_host], ssh_port);
+            }
+
             if !wireguard_config_path.trim().is_empty() {
                 let config_path = Path::new(&wireguard_config_path);
                 if let Err(error) = teardown_local_wireguard_client(config_path) {

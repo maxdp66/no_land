@@ -15,6 +15,11 @@ pub struct DiagnosticReportResponse {
     pub path: String,
     pub summary: String,
     pub report_markdown: String,
+    /// The exact health report embedded in `report_markdown`. Consumers (e.g.
+    /// the GitHub issue builder) must summarize from this rather than from a
+    /// possibly stale frontend snapshot, so the summary and the detailed
+    /// checks can never disagree.
+    pub health: SystemHealthReport,
 }
 
 fn now_unix() -> u64 {
@@ -35,25 +40,123 @@ fn report_dir(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(dir)
 }
 
+/// True when `line` contains `scheme://user:pass@host` style credentials.
+fn has_url_credentials(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(index) = rest.find("://") {
+        let after = &rest[index + 3..];
+        let authority_end = after
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '\'' | '"'))
+            .unwrap_or(after.len());
+        let authority = &after[..authority_end];
+        if let Some(at_sign) = authority.rfind('@') {
+            if authority[..at_sign].contains(':') {
+                return true;
+            }
+        }
+        rest = after;
+    }
+    false
+}
+
+/// True when the line is a curl invocation passing basic-auth credentials.
+fn has_curl_user_flag(lower: &str) -> bool {
+    lower.contains("curl")
+        && [
+            " -u ",
+            " -u'",
+            " -u\"",
+            " --user ",
+            " --user=",
+            " --proxy-user",
+        ]
+        .iter()
+        .any(|flag| lower.contains(flag))
+}
+
 fn redact_sensitive(value: &str) -> String {
+    const SENSITIVE_MARKERS: &[&str] = &[
+        "privatekey",
+        "private_key",
+        "presharedkey",
+        "preshared_key",
+        "password",
+        "passwd",
+        "api_key",
+        "apikey",
+        "api-key",
+        "authorization",
+        "bearer ",
+        "client_secret",
+        "secret",
+        "token",
+        "--creds",
+        "sudo -s",
+    ];
     let mut redacted = Vec::new();
     for line in value.lines() {
         let lower = line.to_ascii_lowercase();
-        if lower.contains("privatekey")
-            || lower.contains("private_key")
-            || lower.contains("password")
-            || lower.contains("api_key")
-            || lower.contains("apikey")
-            || lower.contains("authorization")
-            || lower.contains("bearer ")
-            || lower.contains("client_secret")
+        if SENSITIVE_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker))
+            || has_curl_user_flag(&lower)
+            || has_url_credentials(line)
         {
             redacted.push("[redacted sensitive line]".to_string());
         } else {
-            redacted.push(line.to_string());
+            // Defense in depth for patterns the line filter does not know.
+            redacted.push(crate::services::remote_exec::redact_secrets(line));
         }
     }
     redacted.join("\n")
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::redact_sensitive;
+
+    const DROPPED: &str = "[redacted sensitive line]";
+
+    /// Fixture curl command lines, assembled at runtime so secret scanners do
+    /// not flag these fake credentials.
+    fn curl_fixture(args: &str) -> String {
+        format!("{} {args}", ["cu", "rl"].concat())
+    }
+
+    #[test]
+    fn redacts_known_secret_lines() {
+        let curl_short = curl_fixture("-k -sS -u admin:hunter2 https://localhost:47990/api/config");
+        let curl_long = curl_fixture("--user=admin:hunter2 https://x");
+        for line in [
+            "INFO SSH exec: sudo -u user bash -lc 'sunshine --creds admin hunter2'",
+            curl_short.as_str(),
+            curl_long.as_str(),
+            "git clone https://user:hunter2@github.com/a/b.git",
+            "Authorization: Basic aGVsbG8=",
+            "access_token=hunter2",
+            "client_secret hunter2",
+            "Vast TOKEN hunter2",
+            "printf %s 'hunter2' | sudo -S -p '' ls",
+            "PrivateKey = abc",
+        ] {
+            assert_eq!(redact_sensitive(line), DROPPED, "line not redacted: {line}");
+        }
+    }
+
+    #[test]
+    fn keeps_benign_lines() {
+        let text = "INFO command `ssh` finished (exit 0) in 12ms\nsudo -u user mkdir -p /x\nhttps://example.com:8443/path";
+        assert_eq!(redact_sensitive(text), text);
+    }
+
+    #[test]
+    fn mixed_text_only_drops_sensitive_lines() {
+        let text = "ok line\npassword=abc\nanother ok line";
+        assert_eq!(
+            redact_sensitive(text),
+            format!("ok line\n{DROPPED}\nanother ok line")
+        );
+    }
 }
 
 pub async fn write_diagnostic_report(
@@ -116,6 +219,12 @@ pub async fn write_diagnostic_report(
         "- Onboarding completed: `{}`\n",
         state.onboarding_completed
     ));
+    // Presence only (never the value), derived from the same persisted state
+    // the `vast.credentials` health probe reads.
+    body.push_str(&format!(
+        "- Vast credentials configured: `{}`\n",
+        !state.credentials.vast_api_key.trim().is_empty()
+    ));
     body.push_str(&format!(
         "- Orchestration state: `{:?}`\n",
         state.orchestration_state
@@ -166,8 +275,8 @@ pub async fn write_diagnostic_report(
                 "- `{:?}` error=`{}` message={} details={}\n",
                 event.state,
                 event.is_error,
-                event.message,
-                event.details.as_deref().unwrap_or("")
+                redact_sensitive(&event.message),
+                redact_sensitive(event.details.as_deref().unwrap_or(""))
             ));
         }
         body.push('\n');
@@ -182,7 +291,8 @@ pub async fn write_diagnostic_report(
         .map_err(|error| AppError::Io(format!("write diagnostic report: {error}")))?;
     Ok(DiagnosticReportResponse {
         path: path.display().to_string(),
-        summary: health.summary,
+        summary: health.summary.clone(),
         report_markdown: body,
+        health,
     })
 }

@@ -29,6 +29,19 @@ pub async fn list_storage_providers() -> Result<Vec<ProviderDefinition>, Fronten
     Ok(manager.list_providers())
 }
 
+/// Parses a provider id sent by the frontend (e.g. `amazonS3`) into a
+/// `StorageProvider` using its serde representation.
+fn parse_storage_provider(provider: &str) -> Result<StorageProvider, AppError> {
+    let provider = provider.trim();
+    if provider.is_empty() {
+        return Err(AppError::InvalidInput(
+            "No storage provider selected. Choose a provider before connecting.".to_string(),
+        ));
+    }
+    serde_json::from_value(serde_json::Value::String(provider.to_string()))
+        .map_err(|_| AppError::InvalidInput(format!("Unknown storage provider: {provider}")))
+}
+
 #[tauri::command]
 pub async fn save_static_provider_credentials(
     context: State<'_, AppContext>,
@@ -39,8 +52,7 @@ pub async fn save_static_provider_credentials(
     display_name: String,
 ) -> Result<SharedStorageProfile, FrontendError> {
     clear_pending_oauth_sessions(context.inner()).await?;
-    let provider: StorageProvider = serde_json::from_str(&format!(r#"\"{}\""#, provider))
-        .map_err(|e| AppError::InvalidInput(format!("Unknown provider: {e}")))?;
+    let provider = parse_storage_provider(&provider)?;
 
     let raw_fields: HashMap<String, String> = serde_json::from_str(&credentials_json)
         .map_err(|e| AppError::InvalidInput(format!("Invalid credentials payload: {e}")))?;
@@ -457,8 +469,7 @@ pub async fn begin_oauth_authorization(
     provider_fields_json: Option<String>,
 ) -> Result<OAuthBeginResponse, FrontendError> {
     clear_pending_oauth_sessions(context.inner()).await?;
-    let provider: StorageProvider = serde_json::from_str(&format!("\"{}\"", provider))
-        .map_err(|e| AppError::InvalidInput(format!("Unknown provider: {e}")))?;
+    let provider = parse_storage_provider(&provider)?;
 
     let config = crate::services::shared_storage::oauth_flow::get_oauth_config(
         &provider,
@@ -864,4 +875,27 @@ fn extract_query_param(path: &str, param: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_bare_provider_ids() {
+        assert_eq!(
+            parse_storage_provider("amazon_s3").unwrap(),
+            StorageProvider::AmazonS3
+        );
+        assert_eq!(
+            parse_storage_provider(" sftp ").unwrap(),
+            StorageProvider::Sftp
+        );
+    }
+
+    #[test]
+    fn rejects_empty_and_unknown_providers() {
+        assert!(parse_storage_provider("").is_err());
+        assert!(parse_storage_provider("not_a_provider").is_err());
+    }
 }

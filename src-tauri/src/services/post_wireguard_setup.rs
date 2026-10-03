@@ -1482,21 +1482,19 @@ async fn bootstrap_sunshine_credentials_over_ssh(
     sunshine_password: &str,
 ) -> AppResult<()> {
     let (remote, sunshine_user) = sunshine_ssh_remote(context).await?;
-    let escaped_username = shell_single_quote_escape(sunshine_username);
-    let escaped_password = shell_single_quote_escape(sunshine_password);
-    let command = format!(
-        "sudo -u {sunshine_user} bash -lc 'sunshine --creds '\''{username}'\'' '\''{password}'\'''",
-        sunshine_user = sunshine_user,
-        username = escaped_username,
-        password = escaped_password,
-    );
-    let output = tokio::task::spawn_blocking(move || remote.ssh(&command, Duration::from_secs(30)))
-        .await
-        .map_err(|error| {
-            AppError::Command(format!(
-                "Failed to join Sunshine credential bootstrap task: {error}"
-            ))
-        })??;
+    // Credentials go over the SSH channel's stdin, never on the command line,
+    // so they cannot leak into logs or diagnostic reports.
+    let command = super::sunshine::sunshine_set_creds_command(&sunshine_user);
+    let input = super::remote_exec::nul_delimited_stdin(&[sunshine_username, sunshine_password])?;
+    let output = tokio::task::spawn_blocking(move || {
+        remote.ssh_with_stdin(&command, input, Duration::from_secs(30))
+    })
+    .await
+    .map_err(|error| {
+        AppError::Command(format!(
+            "Failed to join Sunshine credential bootstrap task: {error}"
+        ))
+    })??;
 
     if output.status_code != 0 {
         return Err(AppError::Provisioning(format!(
@@ -1515,10 +1513,6 @@ fn sanitize_ssh_user(value: &str) -> String {
         .trim_matches('"')
         .trim_matches('\'')
         .to_string()
-}
-
-fn shell_single_quote_escape(content: &str) -> String {
-    content.replace('\'', "'\\''")
 }
 
 fn recovery_stage_for_mode(mode: WireGuardSetupMode) -> SetupStage {

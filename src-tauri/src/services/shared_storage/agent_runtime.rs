@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::errors::{AppError, AppResult};
 use crate::services::remote_exec::RemoteExec;
+use crate::utils::shell;
 
 const AGENT_SOCKET: &str = "/run/noland/state-agent.sock";
 const REQUIRED_AGENT_API_VERSION: u64 = 18;
@@ -55,25 +56,25 @@ pub async fn ensure_state_agent(remote: &RemoteExec, target_user: &str) -> AppRe
     let sudo = remote.sudo_prefix();
     let worker = format!(
         "flock -w 1200 /run/lock/noland-state-agent-bootstrap.lock bash {script} {src} /usr/local/bin/noland-state-agent {user}; code=$?; printf '%s\\n' \"$code\" > {status}",
-        script = shell_escape(&remote_script),
-        src = shell_escape(&remote_src),
-        user = shell_escape(target_user),
-        status = shell_escape(&remote_status),
+        script = shell::quote(&remote_script),
+        src = shell::quote(&remote_src),
+        user = shell::quote(target_user),
+        status = shell::quote(&remote_status),
     );
     let launcher = format!(
         "rm -f {status} {log}; nohup sh -c {worker} > {log} 2>&1 < /dev/null &",
-        status = shell_escape(&remote_status),
-        log = shell_escape(&remote_log),
-        worker = shell_escape(&worker),
+        status = shell::quote(&remote_status),
+        log = shell::quote(&remote_log),
+        worker = shell::quote(&worker),
     );
     let setup = format!(
         "{sudo}rm -rf {src} && {sudo}mkdir -p {src} && {sudo}tar -xzf {tar} -C {src} && {sudo}chown -R root:root {src} && printf %s {encoded} | base64 -d > {script} && chmod 700 {script} && {sudo}sh -c {launcher}",
         sudo = sudo,
-        src = shell_escape(&remote_src),
-        tar = shell_escape(&remote_tar),
-        encoded = shell_escape(&encoded_script),
-        script = shell_escape(&remote_script),
-        launcher = shell_escape(&launcher),
+        src = shell::quote(&remote_src),
+        tar = shell::quote(&remote_tar),
+        encoded = shell::quote(&encoded_script),
+        script = shell::quote(&remote_script),
+        launcher = shell::quote(&launcher),
     );
     let setup_output = ssh_command(remote, setup, Duration::from_secs(180)).await?;
     if setup_output.status_code != 0 {
@@ -255,7 +256,7 @@ async fn wait_for_bootstrap(
     let deadline = tokio::time::Instant::now() + BOOTSTRAP_TIMEOUT;
     let status_command = format!(
         "if test -f {status}; then cat {status}; else printf RUNNING; fi",
-        status = shell_escape(remote_status)
+        status = shell::quote(remote_status)
     );
     let mut last_connection_error = None;
 
@@ -303,7 +304,7 @@ async fn wait_for_bootstrap(
 }
 
 async fn read_bootstrap_log(remote: &RemoteExec, remote_log: &str) -> String {
-    let command = format!("tail -n 60 {} 2>/dev/null", shell_escape(remote_log));
+    let command = format!("tail -n 60 {} 2>/dev/null", shell::quote(remote_log));
     match ssh_command(remote, command, Duration::from_secs(30)).await {
         Ok(output) => concise_remote_failure(&output.stdout, &output.stderr),
         Err(error) => format!("log unavailable: {error}"),
@@ -397,7 +398,7 @@ pub async fn call_agent_raw(
         "python3 -c 'import glob,os,socket,sys,time; path=sys.argv[1]; now=time.time(); [(os.unlink(p) if p != path and now-os.path.getmtime(p) > 300 else None) for p in glob.glob(\"/run/noland/noland-rpc-*.json\")]; req=open(path,\"rb\").read(); os.unlink(path); s=socket.socket(socket.AF_UNIX); s.settimeout({timeout}); s.connect(\"{sock}\"); s.sendall(req); s.shutdown(1); sys.stdout.buffer.write(s.makefile(\"rb\").readline(4194305))' {request}",
         timeout = rpc_timeout_secs,
         sock = AGENT_SOCKET,
-        request = shell_escape(&remote_request),
+        request = shell::quote(&remote_request),
     );
     let output_task = {
         let remote = remote.clone();
@@ -524,7 +525,7 @@ impl Drop for TempFileGuard {
 }
 
 async fn cleanup_remote_request(remote: &RemoteExec, remote_request: &str) {
-    let command = format!("rm -f -- {}", shell_escape(remote_request));
+    let command = format!("rm -f -- {}", shell::quote(remote_request));
     let remote = remote.clone();
     let _ =
         tokio::task::spawn_blocking(move || remote.ssh(&command, Duration::from_secs(15))).await;
@@ -540,8 +541,4 @@ fn concise_remote_failure(stdout: &str, stderr: &str) -> String {
         .collect::<Vec<_>>();
     let start = lines.len().saturating_sub(MAX_LINES);
     lines[start..].join("\n")
-}
-
-fn shell_escape(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
