@@ -23,7 +23,7 @@ export function SharedStorageSettings({
   const [enabled, setEnabled] = useState(false);
   const [keyId, setKeyId] = useState("");
   const [appKey, setAppKey] = useState("");
-  const [bucketName, setBucketName] = useState("noland");
+  const [bucketName, setBucketName] = useState("");
   const [remoteName, setRemoteName] = useState("b2");
   const [destinationPrefix, setDestinationPrefix] = useState("vm-backup");
   const [cryptPassword, setCryptPassword] = useState("");
@@ -47,7 +47,7 @@ export function SharedStorageSettings({
       enabled,
       backblazeKeyId: keyId.trim(),
       backblazeApplicationKey: appKey.trim(),
-      bucketName: bucketName.trim() || "noland",
+      bucketName: bucketName.trim(),
       remoteName: remoteName.trim() || "b2",
       destinationPrefix: destinationPrefix.trim() || "vm-backup",
       cryptPassword: cryptPassword.trim() || undefined
@@ -113,7 +113,7 @@ export function SharedStorageSettings({
             label="Bucket Name"
             value={bucketName}
             onChange={(event) => setBucketName(event.target.value)}
-            placeholder="noland"
+            placeholder="Leave blank to generate a unique name"
             disabled={busy}
           />
 
