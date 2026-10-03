@@ -375,13 +375,20 @@ export function SettingsScreen({
     setTurnEnabled(cloudflareTurnSettings?.enabled ?? appState.cloudflareTurn.enabled);
   }, [appState.cloudflareTurn.enabled, cloudflareTurnSettings]);
 
+  // provisionedServers is re-created on every store refresh; key the status
+  // probes on the instance ids so they only re-run when the set changes.
+  const provisionedInstanceIdsKey = appState.provisionedServers
+    .map((server) => server.instanceId)
+    .join(",");
+
   useEffect(() => {
     let cancelled = false;
+    const instanceIds = provisionedInstanceIdsKey
+      ? provisionedInstanceIdsKey.split(",").map(Number)
+      : [];
     async function loadStatuses() {
       const results = await Promise.allSettled(
-        appState.provisionedServers.map((server) =>
-          getInstanceConnectionStatus(server.instanceId),
-        ),
+        instanceIds.map((instanceId) => getInstanceConnectionStatus(instanceId)),
       );
       if (cancelled) return;
       const next: Record<number, InstanceConnectionStatusResponse> = {};
@@ -396,7 +403,7 @@ export function SettingsScreen({
     return () => {
       cancelled = true;
     };
-  }, [appState.provisionedServers]);
+  }, [provisionedInstanceIdsKey]);
 
   async function changeConnectionPreference(
     instanceId: number,

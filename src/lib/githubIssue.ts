@@ -19,9 +19,14 @@ export function buildDiagnosticIssueUrl({
   report,
   reason,
   error,
-  health,
+  health: fallbackHealth,
 }: DiagnosticIssueInput): string {
   const title = `[Crash report] ${reason}`;
+  // Prefer the health report the backend embedded in this diagnostic report.
+  // The caller's `health` is a store snapshot that can be stale (e.g. taken
+  // before the Vast API key was saved), which made the issue summary contradict
+  // the detailed checks in the report body.
+  const health = report.health ?? fallbackHealth;
   const failingChecks = health?.probes
     .filter((probe) => probe.status === "failed")
     .map((probe) => `- ${probe.label}: ${probe.summary}`)

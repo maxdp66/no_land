@@ -20,6 +20,7 @@ export function InstanceUploadModal({ instance, onUpload, onClose }: Props) {
   const [starting, setStarting] = useState(false);
   const destinationRef = useRef("Downloads");
   const startingRef = useRef(false);
+  const instanceId = instance.instanceId;
 
   const startUpload = (paths: string[]) => {
     if (paths.length === 0 || startingRef.current) return;
@@ -45,6 +46,12 @@ export function InstanceUploadModal({ instance, onUpload, onClose }: Props) {
     startUpload(Array.isArray(selection) ? selection : [selection]);
   };
 
+  // The parent passes an inline onClose (new every render); keep the latest
+  // startUpload in a ref so the drag-drop listener is not re-registered on
+  // every parent render / store refresh.
+  const startUploadRef = useRef(startUpload);
+  startUploadRef.current = startUpload;
+
   useEffect(() => {
     if (folderPickerOpen) return;
     let disposed = false;
@@ -62,7 +69,7 @@ export function InstanceUploadModal({ instance, onUpload, onClose }: Props) {
       }
       if (payload.type === "drop" && payload.paths.length > 0) {
         setDragActive(false);
-        startUpload(payload.paths);
+        startUploadRef.current(payload.paths);
       }
     }).then((removeListener) => {
       if (disposed) removeListener();
@@ -73,7 +80,7 @@ export function InstanceUploadModal({ instance, onUpload, onClose }: Props) {
       disposed = true;
       unlisten?.();
     };
-  }, [folderPickerOpen, instance.instanceId, onClose, onUpload]);
+  }, [folderPickerOpen, instanceId]);
 
   return (
     <>

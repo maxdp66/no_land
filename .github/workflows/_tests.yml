@@ -44,6 +44,8 @@ jobs:
       - run: npm ci
       - name: Build desktop frontend assets
         run: npm run build
+      - name: Run frontend unit tests
+        run: npm test
       - name: Prepare required desktop sidecars
         run: node scripts/prepare-mic-sidecar.mjs dev
       - name: Run desktop workspace tests
