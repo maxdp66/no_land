@@ -984,6 +984,16 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
             instance.id,
         )
         .await;
+        recheck_nvidia_driver(
+            &app,
+            &context,
+            &vast,
+            &mut instance,
+            &mut remote,
+            Some(offer.id),
+            &nvidia,
+        )
+        .await?;
     } else {
         emit_transition(
             &app,
@@ -1982,6 +1992,16 @@ async fn run_existing_instance_orchestration(
             instance.id,
         )
         .await;
+        recheck_nvidia_driver(
+            &app,
+            &context,
+            &vast,
+            &mut instance,
+            &mut remote,
+            offer_id,
+            &nvidia,
+        )
+        .await?;
     } else {
         match nvidia.setup_and_validate(&remote).await {
             Ok(()) => {}
@@ -3143,6 +3163,68 @@ async fn ensure_post_nvidia_reboot(
         "Timed out waiting for instance {} to reconnect after reboot",
         instance.id
     )))
+}
+
+/// NVIDIA setup is skipped once an instance is provisioned, so an `apt
+/// upgrade` that swaps the driver libraries afterwards would go unnoticed:
+/// Sunshine still answers health checks while capture shows a black screen.
+/// Re-check the driver on every connect, reboot on a kernel/userspace
+/// mismatch, and re-apply the package holds that prevent it next time.
+async fn recheck_nvidia_driver(
+    app: &AppHandle,
+    context: &AppContext,
+    vast: &VastApiClient,
+    instance: &mut crate::models::vast::VastInstance,
+    remote: &mut RemoteExec,
+    offer_id: Option<u64>,
+    nvidia: &NvidiaHeadlessService,
+) -> AppResult<()> {
+    match nvidia.check_driver(remote).await {
+        Ok(()) => {}
+        Err(AppError::DriverMismatch(_)) => {
+            warn!(
+                instance_id = instance.id,
+                "NVIDIA driver mismatch on a provisioned instance (likely an apt upgrade) — rebooting"
+            );
+            // The earlier post-NVIDIA reboot is recorded locally and on the
+            // instance; clear both so this mismatch triggers a fresh reboot.
+            clear_server_steps(
+                context,
+                instance.id,
+                &[ProvisionStepMarker::PostNvidiaRebootCompleted],
+            )
+            .await?;
+            let clear_marker = {
+                let remote = remote.clone();
+                let command = format!(
+                    "{}rm -f /var/lib/noland/post-nvidia-reboot.old_boot_id",
+                    remote.sudo_prefix()
+                );
+                tokio::task::spawn_blocking(move || remote.ssh(&command, Duration::from_secs(15)))
+                    .await
+                    .map_err(|error| AppError::Command(format!("join failure: {error}")))?
+            };
+            if let Err(error) = clear_marker {
+                warn!("Could not clear remote post-NVIDIA reboot marker: {error}");
+            }
+            ensure_post_nvidia_reboot(app, context, vast, instance, remote, offer_id).await?;
+            ensure_not_cancelled(context)?;
+            nvidia.check_driver(remote).await?;
+        }
+        Err(error) => {
+            warn!(
+                instance_id = instance.id,
+                %error,
+                "NVIDIA driver re-check failed on a provisioned instance; continuing"
+            );
+        }
+    }
+
+    if let Err(error) = nvidia.hold_driver_and_kernel_packages(remote).await {
+        warn!("Could not hold NVIDIA driver and kernel packages: {error}");
+    }
+
+    Ok(())
 }
 
 async fn remote_post_nvidia_reboot_marker_completed(
