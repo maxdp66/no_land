@@ -80,19 +80,22 @@ export CARGO_HOME=/root/.cargo
 export PATH="$CARGO_HOME/bin:$PATH"
 apt-get update -y
 apt-get install -y --no-install-recommends build-essential pkg-config curl clang ca-certificates libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev pipewire pipewire-pulse wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good pulseaudio-utils python3 ufw
+RUST_TOOLCHAIN=1.88.0
 if ! command -v rustup >/dev/null 2>&1; then
-  curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+  curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
 fi
-rustup toolchain install stable --profile minimal >/tmp/noland-rustup.stdout.log 2>/tmp/noland-rustup.stderr.log || true
-rustup default stable >/tmp/noland-rustup-default.stdout.log 2>/tmp/noland-rustup-default.stderr.log
-cargo --version >/tmp/noland-cargo-version.log 2>&1
-rustc --version >/tmp/noland-rustc-version.log 2>&1
+rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal >/tmp/noland-rustup.stdout.log 2>/tmp/noland-rustup.stderr.log
+cargo "+$RUST_TOOLCHAIN" --version >/tmp/noland-cargo-version.log 2>&1
+rustc "+$RUST_TOOLCHAIN" --version >/tmp/noland-rustc-version.log 2>&1
 rm -rf /tmp/noland-mic-build
 mkdir -p /tmp/noland-mic-build
 cd /tmp/noland-mic-build
 tar -xzf /tmp/noland-mic-agent-src.tgz 2>/tmp/noland-mic-tar.log
-rm -f /tmp/noland-mic-build/vm-cloud-mic-agent/Cargo.lock
-if ! cargo build --release --manifest-path /tmp/noland-mic-build/vm-cloud-mic-agent/Cargo.toml >/tmp/noland-mic-build.stdout.log 2>/tmp/noland-mic-build.stderr.log; then
+CARGO_LOCK_FLAG=
+if [ -f /tmp/noland-mic-build/vm-cloud-mic-agent/Cargo.lock ]; then
+  CARGO_LOCK_FLAG=--locked
+fi
+if ! cargo "+$RUST_TOOLCHAIN" build --release $CARGO_LOCK_FLAG --manifest-path /tmp/noland-mic-build/vm-cloud-mic-agent/Cargo.toml >/tmp/noland-mic-build.stdout.log 2>/tmp/noland-mic-build.stderr.log; then
   echo "=== RUSTUP STDOUT ==="
   tail -n 60 /tmp/noland-rustup.stdout.log || true
   echo "=== RUSTUP STDERR ==="
@@ -389,7 +392,7 @@ fn append_source_tree<W: std::io::Write>(
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let name = entry.file_name();
-        if source_root && (name == "Cargo.lock" || name == "target") {
+        if source_root && name == "target" {
             continue;
         }
         let path = entry.path();
