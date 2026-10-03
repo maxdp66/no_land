@@ -79,3 +79,6 @@ src-tauri/platform/*
 /data/
 /skills/
 /skills-lock.json
+
+# TypeScript incremental build info
+*.tsbuildinfo
