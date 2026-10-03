@@ -496,7 +496,8 @@ fi
 
 curl -fsSL "$url" -o "$pkg_path"
 sudo apt-get -o DPkg::Lock::Timeout=600 update
-sudo apt-get -o DPkg::Lock::Timeout=600 install -y "$pkg_path"
+sudo apt-get -o DPkg::Lock::Timeout=600 install -y --allow-change-held-packages "$pkg_path"
+sudo apt-mark hold sunshine >/dev/null 2>&1 || true
 sunshine --version 2>/dev/null || /usr/bin/sunshine --version 2>/dev/null || true"#;
 
         let result = {

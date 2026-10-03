@@ -18,6 +18,12 @@ pub struct NvidiaHeadlessService;
 
 const HEADLESS_PACKAGES: &[&str] = &["x11-xserver-utils", "alsa-utils"];
 
+/// Installed packages that must not change while the display stack runs:
+/// the NVIDIA driver (userspace libraries, Xorg module, DKMS or prebuilt
+/// kernel modules), the kernel meta packages that would pull in a new kernel
+/// without a matching NVIDIA module, and the pinned upstream Sunshine package.
+const HOLD_PACKAGE_PATTERN: &str = "^(nvidia-.*|libnvidia-.*|xserver-xorg-video-nvidia.*|linux-(modules|objects|signatures)-nvidia-.*|linux-(image-|headers-|modules-)?(generic|virtual|kvm|lowlatency|aws|azure|gcp|oracle)(-hwe-[0-9.]+)?|sunshine)$";
+
 const APT_UPDATE_TIMEOUT_SECS: u64 = 900;
 const APT_INSTALL_TIMEOUT_SECS: u64 = 1800;
 
@@ -216,35 +222,7 @@ echo "[nvidia-headless] Headless package install complete"'"#,
             );
         }
 
-        let nvidia_check = {
-            let remote = remote.clone();
-            tokio::task::spawn_blocking(move || remote.ssh("nvidia-smi", Duration::from_secs(30)))
-                .await
-                .map_err(|error| AppError::Command(format!("join failure: {error}")))??
-        };
-
-        if nvidia_check.status_code != 0 || !nvidia_check.stdout.contains("NVIDIA-SMI") {
-            let stderr_lower = nvidia_check.stderr.to_lowercase();
-            let stdout_lower = nvidia_check.stdout.to_lowercase();
-            if stderr_lower.contains("driver/library version mismatch")
-                || stdout_lower.contains("driver/library version mismatch")
-                || stderr_lower.contains("failed to initialize nvml")
-                || stdout_lower.contains("failed to initialize nvml")
-            {
-                return Err(AppError::DriverMismatch(
-                    "NVIDIA kernel driver and userspace library version mismatch. Reboot required."
-                        .to_string(),
-                ));
-            }
-            return Err(AppError::Provisioning(
-                "CUDA device not detected. Please pick a compatible NVIDIA host.".to_string(),
-            ));
-        }
-
-        info!(
-            "GPU detected: {}",
-            nvidia_check.stdout.lines().next().unwrap_or("unknown")
-        );
+        self.check_driver(remote).await?;
 
         let gpu_info = {
             let remote = remote.clone();
@@ -299,6 +277,77 @@ echo "[nvidia-headless] Headless package install complete"'"#,
             info!("NVENC supported: {}", encoder_supported.stdout.trim());
         }
 
+        if let Err(error) = self.hold_driver_and_kernel_packages(remote).await {
+            warn!("Could not hold NVIDIA driver and kernel packages: {error}");
+        }
+
+        Ok(())
+    }
+
+    /// Confirms the loaded NVIDIA kernel module matches the userspace driver.
+    /// Returns `DriverMismatch` when they diverge, which happens after an apt
+    /// upgrade replaces the driver libraries without a reboot: Xorg and NvFBC
+    /// then fail and the stream shows a black screen.
+    pub async fn check_driver(&self, remote: &RemoteExec) -> AppResult<()> {
+        let nvidia_check = {
+            let remote = remote.clone();
+            tokio::task::spawn_blocking(move || remote.ssh("nvidia-smi", Duration::from_secs(30)))
+                .await
+                .map_err(|error| AppError::Command(format!("join failure: {error}")))??
+        };
+
+        if nvidia_check.status_code != 0 || !nvidia_check.stdout.contains("NVIDIA-SMI") {
+            let stderr_lower = nvidia_check.stderr.to_lowercase();
+            let stdout_lower = nvidia_check.stdout.to_lowercase();
+            if stderr_lower.contains("driver/library version mismatch")
+                || stdout_lower.contains("driver/library version mismatch")
+                || stderr_lower.contains("failed to initialize nvml")
+                || stdout_lower.contains("failed to initialize nvml")
+            {
+                return Err(AppError::DriverMismatch(
+                    "NVIDIA kernel driver and userspace library version mismatch. Reboot required."
+                        .to_string(),
+                ));
+            }
+            return Err(AppError::Provisioning(
+                "CUDA device not detected. Please pick a compatible NVIDIA host.".to_string(),
+            ));
+        }
+
+        info!(
+            "GPU detected: {}",
+            nvidia_check.stdout.lines().next().unwrap_or("unknown")
+        );
+
+        Ok(())
+    }
+
+    /// Holds the NVIDIA driver, the kernel meta packages and Sunshine so a
+    /// manual `apt upgrade` on the instance cannot swap the driver or kernel
+    /// underneath the running display stack. Everything else still upgrades.
+    pub async fn hold_driver_and_kernel_packages(&self, remote: &RemoteExec) -> AppResult<()> {
+        let command = format!(
+            r#"pkgs=$(dpkg-query -W -f='${{db:Status-Abbrev}} ${{Package}}\n' 2>/dev/null | awk '$1 ~ /^[ih]i$/ {{print $2}}' | grep -E '{HOLD_PACKAGE_PATTERN}' || true)
+if [ -z "$pkgs" ]; then echo NOLAND_HOLD_NONE; exit 0; fi
+{sudo}apt-mark hold $pkgs >/dev/null && echo "NOLAND_HOLD_OK $(echo $pkgs)""#,
+            sudo = remote.sudo_prefix(),
+        );
+        let output = {
+            let remote = remote.clone();
+            tokio::task::spawn_blocking(move || remote.ssh(&command, Duration::from_secs(60)))
+                .await
+                .map_err(|error| AppError::Command(format!("join failure: {error}")))??
+        };
+
+        if output.status_code != 0 {
+            return Err(AppError::Command(format!(
+                "apt-mark hold failed (exit {}): {}",
+                output.status_code,
+                output.stderr.trim()
+            )));
+        }
+
+        info!("Package holds: {}", output.stdout.trim());
         Ok(())
     }
 
@@ -403,5 +452,64 @@ echo "[nvidia-headless] Headless package install complete"'"#,
         }
 
         Ok(NvidiaDiagnostics { commands: map })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::{io::Write, process::Command, process::Stdio};
+
+    use super::HOLD_PACKAGE_PATTERN;
+
+    fn held(packages: &[&str]) -> Vec<String> {
+        let mut child = Command::new("grep")
+            .args(["-E", HOLD_PACKAGE_PATTERN])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("grep available");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(packages.join("\n").as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn hold_pattern_covers_driver_kernel_meta_and_sunshine_only() {
+        let matched = held(&[
+            "nvidia-driver-570",
+            "libnvidia-fbc1-570",
+            "xserver-xorg-video-nvidia-570",
+            "linux-modules-nvidia-570-generic",
+            "linux-generic",
+            "linux-image-virtual",
+            "linux-headers-generic-hwe-24.04",
+            "sunshine",
+            "linux-image-6.8.0-45-generic",
+            "sunshine-extra",
+            "pipewire",
+            "xserver-xorg-core",
+        ]);
+        assert_eq!(
+            matched,
+            [
+                "nvidia-driver-570",
+                "libnvidia-fbc1-570",
+                "xserver-xorg-video-nvidia-570",
+                "linux-modules-nvidia-570-generic",
+                "linux-generic",
+                "linux-image-virtual",
+                "linux-headers-generic-hwe-24.04",
+                "sunshine",
+            ]
+        );
     }
 }

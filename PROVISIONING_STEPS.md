@@ -212,7 +212,17 @@ sudo cp /root/.Xauthority /run/user/<uid>/.Xauthority
 sudo chown <user>:<user> /run/user/<uid>/.Xauthority
 ```
 
-### Step 6.9: Create User Config Directories
+### Step 6.9: Hold Driver, Kernel and Sunshine Packages
+
+So a manual `apt upgrade` on the instance can't swap the NVIDIA driver or kernel under the running display stack (which shows up as a black stream until reboot), the installed NVIDIA driver packages, kernel meta packages (`linux-generic`, `linux-image-virtual`, …) and `sunshine` are put on hold:
+
+```bash
+sudo apt-mark hold <matching installed packages>
+```
+
+Everything else still upgrades normally. On every reconnect the app also re-runs `nvidia-smi`; a driver/library version mismatch triggers a reboot before streaming, and the holds are re-applied.
+
+### Step 6.10: Create User Config Directories
 
 ```bash
 mkdir -p ~/.config/pipewire/pipewire.conf.d ~/.config/wireplumber ~/.config/systemd/user
