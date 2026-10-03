@@ -136,14 +136,24 @@ impl SharedStorageManager {
         context: &AppContext,
         payload: crate::models::app_state::SharedStorageSettingsUpdate,
     ) -> AppResult<()> {
+        let previous_bucket_name = context
+            .load_state()
+            .await
+            .shared_storage
+            .settings
+            .bucket_name;
         let mut settings = crate::models::app_state::SharedStorageSettings::default();
         settings.enabled = payload.enabled;
         settings.backblaze_key_id = payload.backblaze_key_id;
         settings.backblaze_application_key = payload.backblaze_application_key;
-        settings.bucket_name = if payload.bucket_name.trim().is_empty() {
-            "noland".to_string()
-        } else {
+        // A blank name keeps the bucket already in use, or gets a freshly
+        // generated unique one; never the shared "noland" name.
+        settings.bucket_name = if !payload.bucket_name.trim().is_empty() {
             payload.bucket_name
+        } else if !previous_bucket_name.trim().is_empty() && previous_bucket_name != "noland" {
+            previous_bucket_name
+        } else {
+            crate::models::app_state::generate_default_bucket_name()
         };
         settings.remote_name = if payload.remote_name.trim().is_empty() {
             "b2".to_string()

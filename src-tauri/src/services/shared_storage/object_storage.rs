@@ -39,7 +39,10 @@ impl StorageProvider {
                         field_type: ProviderFieldType::Text,
                         required: true,
                         placeholder: Some("noland-backups".to_string()),
-                        help_text: None,
+                        help_text: Some(
+                            "Bucket names are shared by all Backblaze accounts, so pick a unique one."
+                                .to_string(),
+                        ),
                     },
                     ProviderField {
                         key: "prefix".to_string(),

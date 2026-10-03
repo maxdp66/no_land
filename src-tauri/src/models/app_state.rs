@@ -890,13 +890,21 @@ pub struct SharedStorageSettings {
     pub crypt_password: Option<String>,
 }
 
+/// B2 bucket names are global across every Backblaze account, so a fixed
+/// default like "noland" is almost always taken by someone else. Generate a
+/// per-install name instead; it is persisted with the rest of the settings.
+pub fn generate_default_bucket_name() -> String {
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    format!("noland-{}", &id[..12])
+}
+
 impl Default for SharedStorageSettings {
     fn default() -> Self {
         Self {
             enabled: false,
             backblaze_key_id: String::new(),
             backblaze_application_key: String::new(),
-            bucket_name: "noland".to_string(),
+            bucket_name: generate_default_bucket_name(),
             remote_name: "b2".to_string(),
             destination_prefix: "vm-backup".to_string(),
             crypt_password: None,
@@ -1259,9 +1267,21 @@ pub struct MicSessionResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        AutoShutdownSettings, AutoShutdownState, BackupPerformanceMode, MicQualityProfile,
-        PersistedAppState, SharedStorageBackupSelectionRequest,
+        generate_default_bucket_name, AutoShutdownSettings, AutoShutdownState,
+        BackupPerformanceMode, MicQualityProfile, PersistedAppState,
+        SharedStorageBackupSelectionRequest,
     };
+
+    #[test]
+    fn default_bucket_name_is_unique_and_valid_for_b2() {
+        let a = generate_default_bucket_name();
+        let b = generate_default_bucket_name();
+
+        assert_ne!(a, b);
+        assert!(a.starts_with("noland-"));
+        assert!((6..=63).contains(&a.len()));
+        assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+    }
 
     #[test]
     fn auto_shutdown_defaults_are_safe() {
