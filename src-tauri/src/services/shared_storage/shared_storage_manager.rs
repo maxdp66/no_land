@@ -1332,6 +1332,20 @@ fn infer_provider_from_label(label: &str) -> Option<StorageProvider> {
 }
 
 fn extract_actionable_rclone_error(output: &str) -> Option<String> {
+    // B2 bucket names are globally unique across all accounts. rclone tries
+    // to create the bucket when it can't see it, and only accepts the
+    // duplicate_bucket_name reply if the bucket turns out to be visible to
+    // this key. Reaching this error means it isn't.
+    if output.contains("duplicate_bucket_name") {
+        return Some(
+            "Backblaze B2 rejected the bucket name (400 duplicate_bucket_name). \
+             B2 bucket names are shared by every Backblaze account, so this one already \
+             exists but isn't visible to your application key. Either choose a more unique \
+             bucket name, or, if the bucket is yours, use a key with access to it (an \
+             \"All buckets\" key, or one restricted to this exact bucket)."
+                .to_string(),
+        );
+    }
     let known_host_noise = "warning: permanently added";
     for line in output.lines() {
         let trimmed = line.trim();
@@ -1442,9 +1456,21 @@ fn redact_profile_secrets(input: &str, active_profile: &ActiveSharedStorageProfi
 #[cfg(test)]
 mod tests {
     use super::{
-        backup_mode_for_selection, infer_steam_app_id_from_catalog, parse_catalog_selection,
+        backup_mode_for_selection, extract_actionable_rclone_error,
+        infer_steam_app_id_from_catalog, parse_catalog_selection,
         restore_mode_for_catalog_selection, AgentCatalogAppRecord,
     };
+
+    #[test]
+    fn explains_b2_duplicate_bucket_name() {
+        let output = "2026/10/03 12:00:00 ERROR : Attempt 1/3 failed with 1 errors and: \
+                      failed to create bucket: Bucket name is already in use. \
+                      (400 duplicate_bucket_name)";
+        let message = extract_actionable_rclone_error(output).expect("should be actionable");
+
+        assert!(message.contains("duplicate_bucket_name"));
+        assert!(message.contains("unique bucket name"));
+    }
 
     #[test]
     fn selected_apps_use_complete_application_backup_mode() {
