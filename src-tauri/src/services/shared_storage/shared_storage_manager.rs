@@ -12,6 +12,7 @@ use crate::models::app_state::BackupPerformanceMode;
 use crate::models::application_bundle::{
     SharedStorageProfile, SharedStorageStatus, StorageProvider,
 };
+use crate::utils::shell;
 
 use crate::services::{app_context::AppContext, remote_exec::RemoteExec};
 
@@ -226,7 +227,7 @@ impl SharedStorageManager {
             "{}{rclone} lsf {src} --max-depth 1 2>&1 | sed -n '1,20p'",
             remote.sudo_as_user_prefix(target_user),
             rclone = "rclone",
-            src = shell_escape(&source),
+            src = shell::quote(&source),
         );
 
         let list_output = {
@@ -273,10 +274,13 @@ impl SharedStorageManager {
         let local_test_path = format!("/tmp/{}.txt", marker);
         let remote_test_path = format!("{}/.noland-healthcheck/{}.txt", source, marker);
         let write_local_cmd = format!(
-            "{}bash -lc 'printf %s {marker} > {path} && chmod 600 {path}'",
+            "{}{}",
             remote.sudo_as_user_prefix(target_user),
-            marker = shell_escape(&marker),
-            path = shell_escape(&local_test_path),
+            shell::bash_lc(&format!(
+                "printf %s {marker} > {path} && chmod 600 {path}",
+                marker = shell::quote(&marker),
+                path = shell::quote(&local_test_path),
+            )),
         );
         {
             let remote = remote.clone();
@@ -290,8 +294,8 @@ impl SharedStorageManager {
         let upload_cmd = format!(
             "{}rclone copyto {local} {remote_path} 2>&1",
             remote.sudo_as_user_prefix(target_user),
-            local = shell_escape(&local_test_path),
-            remote_path = shell_escape(&remote_test_path),
+            local = shell::quote(&local_test_path),
+            remote_path = shell::quote(&remote_test_path),
         );
         let upload_output = {
             let remote = remote.clone();
@@ -321,7 +325,7 @@ impl SharedStorageManager {
         let read_cmd = format!(
             "{}rclone cat {remote_path} 2>&1",
             remote.sudo_as_user_prefix(target_user),
-            remote_path = shell_escape(&remote_test_path),
+            remote_path = shell::quote(&remote_test_path),
         );
         let read_output = {
             let remote = remote.clone();
@@ -351,7 +355,7 @@ impl SharedStorageManager {
         let delete_cmd = format!(
             "{}rclone deletefile {remote_path} 2>&1",
             remote.sudo_as_user_prefix(target_user),
-            remote_path = shell_escape(&remote_test_path),
+            remote_path = shell::quote(&remote_test_path),
         );
         let delete_output = {
             let remote = remote.clone();
@@ -381,7 +385,7 @@ impl SharedStorageManager {
         let cleanup_cmd = format!(
             "{}rm -f {path} >/dev/null 2>&1 || true",
             remote.sudo_prefix(),
-            path = shell_escape(&local_test_path),
+            path = shell::quote(&local_test_path),
         );
         let _ = {
             let remote = remote.clone();
@@ -582,9 +586,9 @@ impl SharedStorageManager {
         let cmd = format!(
             "{}rclone copy / {dest} --config {config} --filter-from {filter} --checksum{progress}",
             remote.sudo_prefix(),
-            dest = shell_escape(&dest),
-            config = shell_escape(&rclone_config_path),
-            filter = shell_escape(&filter_path),
+            dest = shell::quote(&dest),
+            config = shell::quote(&rclone_config_path),
+            filter = shell::quote(&filter_path),
             progress = progress_flag,
         );
 
@@ -846,8 +850,8 @@ impl SharedStorageManager {
         let rclone_conf_path = format!("{}/rclone.conf", rclone_conf_dir);
         let mkdir_cmd = format!(
             "sudo -u {user} mkdir -p {dir}",
-            user = target_user,
-            dir = shell_escape(&rclone_conf_dir),
+            user = shell::quote(target_user),
+            dir = shell::quote(&rclone_conf_dir),
         );
         {
             let remote = remote.clone();
@@ -858,10 +862,13 @@ impl SharedStorageManager {
 
         let config_content = Self::build_rclone_config_content(active_profile)?;
         let write_cmd = format!(
-            "sudo -u {user} bash -lc 'cat > {path} <<\"RCLONE_EOF\"\n{content}\nRCLONE_EOF\nchmod 600 {path}'",
-            user = target_user,
-            path = shell_escape(&rclone_conf_path),
-            content = config_content,
+            "sudo -u {user} {script}",
+            user = shell::quote(target_user),
+            script = shell::bash_lc(&format!(
+                "cat > {path} <<\"RCLONE_EOF\"\n{content}\nRCLONE_EOF\nchmod 600 {path}",
+                path = shell::quote(&rclone_conf_path),
+                content = config_content,
+            )),
         );
         let output = {
             let remote = remote.clone();
@@ -986,10 +993,13 @@ impl SharedStorageManager {
         let rules_path = format!("/home/{}/rules.txt", target_user);
 
         let cmd = format!(
-            "sudo -u {user} bash -lc 'cat > {path} <<\"RULES_EOF\"\n{content}\nRULES_EOF\nchmod 644 {path}'",
-            user = target_user,
-            path = shell_escape(&rules_path),
-            content = rules_content,
+            "sudo -u {user} {script}",
+            user = shell::quote(target_user),
+            script = shell::bash_lc(&format!(
+                "cat > {path} <<\"RULES_EOF\"\n{content}\nRULES_EOF\nchmod 644 {path}",
+                path = shell::quote(&rules_path),
+                content = rules_content,
+            )),
         );
 
         let output = {
@@ -1092,8 +1102,6 @@ impl SharedStorageManager {
     }
 }
 
-/// Simple shell escaping for single-quoted strings.
-
 fn restore_mode_for_catalog_selection() -> &'static str {
     "complete_application"
 }
@@ -1175,10 +1183,10 @@ async fn ensure_restored_steam_manifest(
     let script_b64 =
         base64::engine::general_purpose::STANDARD.encode(STEAM_SYNC_MANIFEST_SCRIPT.as_bytes());
     let command = format!(
-        "tmp_root=/tmp/noland-steam-manifest-sync && sudo rm -rf \"$tmp_root\" && sudo mkdir -p \"$tmp_root\" && printf %s '{script_b64}' | base64 -d | sudo tee \"$tmp_root/script.py\" >/dev/null && printf %s '{payload_b64}' | sudo tee \"$tmp_root/payload.b64\" >/dev/null && sudo chmod 644 \"$tmp_root/script.py\" \"$tmp_root/payload.b64\" && sudo -i -u '{user}' python3 \"$tmp_root/script.py\" \"$tmp_root/payload.b64\"; status=$?; sudo rm -rf \"$tmp_root\"; exit $status",
-        payload_b64 = shell_escape(&payload_b64),
-        script_b64 = shell_escape(&script_b64),
-        user = shell_escape(target_user),
+        "tmp_root=/tmp/noland-steam-manifest-sync && sudo rm -rf \"$tmp_root\" && sudo mkdir -p \"$tmp_root\" && printf %s {script_b64} | base64 -d | sudo tee \"$tmp_root/script.py\" >/dev/null && printf %s {payload_b64} | sudo tee \"$tmp_root/payload.b64\" >/dev/null && sudo chmod 644 \"$tmp_root/script.py\" \"$tmp_root/payload.b64\" && sudo -i -u {user} python3 \"$tmp_root/script.py\" \"$tmp_root/payload.b64\"; status=$?; sudo rm -rf \"$tmp_root\"; exit $status",
+        payload_b64 = shell::quote(&payload_b64),
+        script_b64 = shell::quote(&script_b64),
+        user = shell::quote(target_user),
     );
     let output = {
         let remote = remote.clone();
@@ -1301,10 +1309,6 @@ with open(manifest, 'w', encoding='utf-8') as handle:
     handle.write(f'\t"installdir"\t\t"{install_dir_hint().replace(chr(34), chr(39))}"\n')
     handle.write('}\n')
 "#;
-
-fn shell_escape(input: &str) -> String {
-    input.replace('\'', "'\"'\"'")
-}
 
 fn infer_provider_from_label(label: &str) -> Option<StorageProvider> {
     let normalized = label.trim().to_ascii_lowercase();

@@ -16,6 +16,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
+use crate::utils::shell;
 
 use super::{
     app_context::AppContext,
@@ -219,8 +220,8 @@ sys.stdout.buffer.write(line + b"\n")
         );
         let command = format!(
             "python3 -c {} {}",
-            shell_single_quote(&python),
-            shell_single_quote(&request_id)
+            shell::quote(&python),
+            shell::quote(&request_id)
         );
         let output = run_root_script(remote, command, Duration::from_secs(20)).await?;
         if output.status_code != 0 {
@@ -413,13 +414,13 @@ rm -f {remote_upload}
 printf '%s  %s\n' {installer_sha256} {root_installer} | sha256sum -c -
 chmod 0700 {root_installer}
 {root_installer} {target_user} {version} {revision} {root_staging}"#,
-        root_staging = shell_single_quote(&root_staging),
-        remote_upload = shell_single_quote(&remote_upload),
-        root_installer = shell_single_quote(&root_installer),
-        installer_sha256 = shell_single_quote(&installer_sha256),
-        target_user = shell_single_quote(target_user),
-        version = shell_single_quote(AGENT_VERSION),
-        revision = shell_single_quote(DEPLOYMENT_REVISION),
+        root_staging = shell::quote(&root_staging),
+        remote_upload = shell::quote(&remote_upload),
+        root_installer = shell::quote(&root_installer),
+        installer_sha256 = shell::quote(&installer_sha256),
+        target_user = shell::quote(target_user),
+        version = shell::quote(AGENT_VERSION),
+        revision = shell::quote(DEPLOYMENT_REVISION),
     );
     let output = run_root_script(remote, script, Duration::from_secs(30 * 60)).await?;
     if output.status_code != 0 {
@@ -470,12 +471,12 @@ if [[ -x {binary} ]] \
 else
   printf '%s\n' NOLAND_LIFECYCLE_AGENT_MISSING
 fi"#,
-        target_user = shell_single_quote(target_user),
+        target_user = shell::quote(target_user),
         binary = AGENT_BINARY,
         revision_path = REVISION_PATH,
         service = AGENT_SERVICE,
-        expected_version = shell_single_quote(&expected_output),
-        expected_revision = shell_single_quote(DEPLOYMENT_REVISION),
+        expected_version = shell::quote(&expected_output),
+        expected_revision = shell::quote(DEPLOYMENT_REVISION),
     );
     let output = run_root_script(remote, script, Duration::from_secs(45)).await?;
     if output.status_code != 0 {
@@ -608,7 +609,7 @@ if [[ -e {root_staging} || -L {root_staging} ]]; then
   exit 1
 fi
 mkdir -m 0700 {root_staging}"#,
-        root_staging = shell_single_quote(&root_staging),
+        root_staging = shell::quote(&root_staging),
     );
     match run_root_script(remote, create_staging, Duration::from_secs(20)).await {
         Ok(output) if output.status_code == 0 => {}
@@ -649,8 +650,8 @@ mkdir -m 0700 {root_staging}"#,
   exit 1
 fi
 printf '%s  %s\n' {capability_sha256} {root_capability} | sha256sum -c -"#,
-                root_capability = shell_single_quote(&root_capability),
-                capability_sha256 = shell_single_quote(&capability.sha256),
+                root_capability = shell::quote(&root_capability),
+                capability_sha256 = shell::quote(&capability.sha256),
             )
         },
     );
@@ -661,11 +662,11 @@ capability_temp="$(mktemp /var/lib/noland/lifecycle/.storage-capability.json.XXX
 install -o root -g root -m 0600 {root_capability} "$capability_temp"
 mv -f "$capability_temp" {capability_path}
 capability_temp="""#,
-            root_capability = shell_single_quote(&root_capability),
-            capability_path = shell_single_quote(CAPABILITY_PATH),
+            root_capability = shell::quote(&root_capability),
+            capability_path = shell::quote(CAPABILITY_PATH),
         )
     } else {
-        format!("rm -f {}", shell_single_quote(CAPABILITY_PATH))
+        format!("rm -f {}", shell::quote(CAPABILITY_PATH))
     };
     let readiness_python = r#"import json
 import socket
@@ -736,18 +737,18 @@ for _ in $(seq 1 30); do
 done
 echo 'lifecycle-agent did not report the expected configuration after restart' >&2
 exit 1"#,
-        root_staging = shell_single_quote(&root_staging),
-        remote_config = shell_single_quote(&remote_config),
-        root_config = shell_single_quote(&root_config),
-        config_sha256 = shell_single_quote(config_sha256),
+        root_staging = shell::quote(&root_staging),
+        remote_config = shell::quote(&remote_config),
+        root_config = shell::quote(&root_config),
+        config_sha256 = shell::quote(config_sha256),
         capability_stage = capability_stage,
         capability_install = capability_install,
-        config_path = shell_single_quote(CONFIG_PATH),
+        config_path = shell::quote(CONFIG_PATH),
         service = AGENT_SERVICE,
-        readiness_python = shell_single_quote(readiness_python),
-        status_socket = shell_single_quote(STATUS_SOCKET),
-        expected_instance_id = shell_single_quote(&expected_instance_id.to_string()),
-        expected_enabled = shell_single_quote(if expected_enabled { "true" } else { "false" }),
+        readiness_python = shell::quote(readiness_python),
+        status_socket = shell::quote(STATUS_SOCKET),
+        expected_instance_id = shell::quote(&expected_instance_id.to_string()),
+        expected_enabled = shell::quote(if expected_enabled { "true" } else { "false" }),
     );
     let output = run_root_script(remote, script, Duration::from_secs(90)).await?;
     if output.status_code != 0 {
@@ -792,14 +793,14 @@ chmod 0600 "$destination_temp"
 printf '%s  %s\n' {expected_sha256} "$destination_temp" | sha256sum -c -
 mv -f "$destination_temp" {destination}
 destination_temp="""#,
-        root_staging = shell_single_quote(root_staging),
-        expected_sha256 = shell_single_quote(expected_sha256),
-        destination = shell_single_quote(destination),
+        root_staging = shell::quote(root_staging),
+        expected_sha256 = shell::quote(expected_sha256),
+        destination = shell::quote(destination),
     );
     let command = if remote.is_root() {
-        format!("bash -lc {}", shell_single_quote(&script))
+        format!("bash -lc {}", shell::quote(&script))
     } else {
-        format!("sudo -n bash -lc {}", shell_single_quote(&script))
+        format!("sudo -n bash -lc {}", shell::quote(&script))
     };
     let remote = remote.clone();
     let output = tokio::task::spawn_blocking(move || {
@@ -832,8 +833,8 @@ async fn cleanup_configuration_staging(
 ) {
     let script = format!(
         "rm -f -- {}; rm -rf -- {}",
-        shell_single_quote(remote_config),
-        shell_single_quote(root_staging)
+        shell::quote(remote_config),
+        shell::quote(root_staging)
     );
     if let Err(error) = run_root_script(remote, script, Duration::from_secs(15)).await {
         warn!(%error, "Could not clean lifecycle configuration staging");
@@ -845,7 +846,7 @@ async fn cleanup_remote_uploads(remote: &RemoteExec, paths: &[&str]) {
         "rm -f -- {}",
         paths
             .iter()
-            .map(|path| shell_single_quote(path))
+            .map(|path| shell::quote(path))
             .collect::<Vec<_>>()
             .join(" ")
     );
@@ -860,9 +861,9 @@ async fn run_root_script(
     timeout: Duration,
 ) -> AppResult<ExecOutput> {
     let command = if remote.is_root() {
-        format!("bash -lc {}", shell_single_quote(&script))
+        format!("bash -lc {}", shell::quote(&script))
     } else {
-        format!("sudo -n bash -lc {}", shell_single_quote(&script))
+        format!("sudo -n bash -lc {}", shell::quote(&script))
     };
     let remote = remote.clone();
     tokio::task::spawn_blocking(move || remote.ssh(&command, timeout))
@@ -1049,10 +1050,6 @@ fn set_owner_only_file_permissions(path: &Path) -> AppResult<()> {
 #[cfg(not(unix))]
 fn set_owner_only_file_permissions(_path: &Path) -> AppResult<()> {
     Ok(())
-}
-
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn concise_remote_failure(output: &ExecOutput) -> String {

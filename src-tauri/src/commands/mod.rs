@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::utils::shell;
 use crate::{
     errors::{AppError, AppResult, FrontendError},
     input::{
@@ -4596,12 +4597,12 @@ pub async fn list_remote_upload_folders(
     validate_remote_browse_path(&requested)?;
     let browse_script = format!(
         "cd -- {} && printf '__NOLAND_PATH__%s\\n' \"$PWD\" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' | LC_ALL=C sort",
-        shell_quote_upload_path(&requested.to_string_lossy())
+        shell::quote(&requested.to_string_lossy())
     );
     let command = format!(
         "{}sh -c {}",
         remote.sudo_as_user_prefix(&target_user),
-        shell_quote_upload_path(&browse_script)
+        shell::quote(&browse_script)
     );
     let output = tokio::task::spawn_blocking(move || remote.ssh(&command, Duration::from_secs(30)))
         .await
@@ -4660,7 +4661,7 @@ pub async fn upload_paths_to_instance(
     let mkdir_command = format!(
         "{}mkdir -p -- {}",
         remote.sudo_as_user_prefix(&target_user),
-        shell_quote_upload_path(&destination_string)
+        shell::quote(&destination_string)
     );
     let mkdir_output = {
         let mkdir_remote = remote.clone();
@@ -4733,9 +4734,9 @@ pub async fn upload_paths_to_instance(
         let ownership_command = format!(
             "{}chown -R {}:$(id -gn {}) -- {}",
             remote.sudo_prefix(),
-            shell_quote_upload_path(&target_user),
-            shell_quote_upload_path(&target_user),
-            shell_quote_upload_path(&uploaded_path.to_string_lossy())
+            shell::quote(&target_user),
+            shell::quote(&target_user),
+            shell::quote(&uploaded_path.to_string_lossy())
         );
         let ownership_output = {
             let remote = remote.clone();
@@ -4815,10 +4816,7 @@ async fn resolve_remote_home(
     remote: &RemoteExec,
     target_user: &str,
 ) -> Result<String, FrontendError> {
-    let lookup = format!(
-        "getent passwd {} | cut -d: -f6",
-        shell_quote_upload_path(target_user)
-    );
+    let lookup = format!("getent passwd {} | cut -d: -f6", shell::quote(target_user));
     let remote = remote.clone();
     let output = tokio::task::spawn_blocking(move || remote.ssh(&lookup, Duration::from_secs(30)))
         .await
@@ -4941,10 +4939,6 @@ fn emit_direct_upload_progress(
             fraction: fraction.clamp(0.0, 1.0),
         },
     );
-}
-
-fn shell_quote_upload_path(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(test)]

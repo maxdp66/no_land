@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, time::Duration};
 use base64::Engine;
 use tracing::warn;
 
+use crate::utils::shell;
 use crate::{
     errors::{AppError, AppResult},
     models::launch_library::{LaunchLibraryItem, LaunchLibraryResponse},
@@ -343,7 +344,7 @@ pub(crate) async fn verify_entry_launch_target(
     let script = match plan {
         LaunchPlan::Executable(executable) => format!(
             "path={}\ncase \"$path\" in */*) case \"$path\" in *.[jJ][aA][rR]|*.[eE][xX][eE]) test -f \"$path\" ;; *) test -f \"$path\" -a -x \"$path\" ;; esac ;; *) command -v \"$path\" >/dev/null 2>&1 ;; esac",
-            shell_quote(&executable)
+            shell::quote(&executable)
         ),
         LaunchPlan::Desktop(desktop_id) => format!(
             r#"python3 - <<'PY'
@@ -380,7 +381,7 @@ for root in roots:
         raise SystemExit(0)
 raise SystemExit(1)
 PY"#,
-            desktop_id = shell_quote(&desktop_id)
+            desktop_id = shell::quote(&desktop_id)
         ),
         LaunchPlan::Steam(app_id) => format!(
             r#"python3 - <<'PY'
@@ -486,8 +487,8 @@ async fn run_remote_user_script(
     let encoded = base64::engine::general_purpose::STANDARD.encode(script.as_bytes());
     let remote_command = format!(
         "printf %s {payload} | base64 -d | sudo -i -u {user} sh",
-        payload = shell_quote(&encoded),
-        user = shell_quote(target_user),
+        payload = shell::quote(&encoded),
+        user = shell::quote(target_user),
     );
     let remote = remote.clone();
     tokio::task::spawn_blocking(move || remote.ssh(&remote_command, timeout))
@@ -579,7 +580,7 @@ for root in roots:
 results.sort(key=lambda item: item[0])
 print(results[0][1] if results else '')
 PY"#,
-        terms = shell_quote(&payload),
+        terms = shell::quote(&payload),
         user = target_user.replace('"', ""),
     );
     let remote = remote.clone();
@@ -806,12 +807,12 @@ fn launch_script(plan: &LaunchPlan) -> AppResult<String> {
             }
             format!(
                 "if ! command -v gtk-launch >/dev/null 2>&1; then echo 'gtk-launch is not installed on this instance.' >&2; exit 127; fi\ngtk-launch {} >/tmp/noland-launch-desktop.log 2>&1",
-                shell_quote(desktop_id)
+                shell::quote(desktop_id)
             )
         }
         LaunchPlan::Executable(executable) => format!(
             "executable={exe}\ncase \"$executable\" in\n  */*)\n    if [ ! -f \"$executable\" ]; then printf '%s\\n' \"The discovered executable is missing: $executable\" >&2; exit 126; fi\n    ;;\n  *)\n    executable=$(command -v \"$executable\") || {{ printf '%s\\n' 'The discovered executable command is unavailable.' >&2; exit 127; }}\n    ;;\nesac\ncase \"$executable\" in\n  *.[jJ][aA][rR])\n    command -v java >/dev/null 2>&1 || {{ printf '%s\\n' 'Java is required to launch this application.' >&2; exit 127; }}\n    nohup java -jar \"$executable\" >/tmp/noland-launch-executable.log 2>&1 &\n    ;;\n  *.[eE][xX][eE])\n    command -v wine >/dev/null 2>&1 || {{ printf '%s\\n' 'Wine is required to launch this Windows application.' >&2; exit 127; }}\n    nohup wine \"$executable\" >/tmp/noland-launch-executable.log 2>&1 &\n    ;;\n  *)\n    if [ ! -x \"$executable\" ]; then printf '%s\\n' \"The discovered executable is not executable: $executable\" >&2; exit 126; fi\n    nohup \"$executable\" >/tmp/noland-launch-executable.log 2>&1 &\n    ;;\nesac",
-            exe = shell_quote(executable),
+            exe = shell::quote(executable),
         ),
     };
     if matches!(plan, LaunchPlan::Steam(_)) {
@@ -879,7 +880,7 @@ manifest.write_text(
     encoding='utf-8'
 )
 PY"#,
-        payload = shell_quote(&payload),
+        payload = shell::quote(&payload),
     );
     let output = run_remote_user_script(
         remote,
@@ -1076,10 +1077,6 @@ fn non_empty_or(value: &str, fallback: &str) -> String {
     } else {
         value.to_string()
     }
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(test)]

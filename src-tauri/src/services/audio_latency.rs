@@ -4,6 +4,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use tracing::{info, warn};
 
 use crate::errors::{AppError, AppResult};
+use crate::utils::shell;
 
 use super::{app_config::AppConfig, remote_exec::RemoteExec};
 
@@ -37,8 +38,8 @@ impl AudioLatencyService {
         let encoded_script = STANDARD.encode(normalized_script.as_bytes());
         let mut args = format!(
             "--target-user {} --profile {}",
-            shell_single_quote(&self.target_user),
-            shell_single_quote(&self.profile)
+            shell::quote(&self.target_user),
+            shell::quote(&self.profile)
         );
 
         if self.force_sink_override {
@@ -47,12 +48,15 @@ impl AudioLatencyService {
 
         if let Some(sink_override) = &self.sink_override {
             args.push_str(" --sink-override ");
-            args.push_str(&shell_single_quote(sink_override));
+            args.push_str(&shell::quote(sink_override));
         }
 
         let remote_command = format!(
-            "sudo bash -lc 'set -euo pipefail; base64 -d > /tmp/noland-lowlatency-audio.sh <<\"EOF\"\n{}\nEOF\nchmod +x /tmp/noland-lowlatency-audio.sh\n/tmp/noland-lowlatency-audio.sh {}'",
-            encoded_script, args
+            "sudo {}",
+            shell::bash_lc(&format!(
+                "set -euo pipefail; base64 -d > /tmp/noland-lowlatency-audio.sh <<\"EOF\"\n{}\nEOF\nchmod +x /tmp/noland-lowlatency-audio.sh\n/tmp/noland-lowlatency-audio.sh {}",
+                encoded_script, args
+            ))
         );
 
         let output = {
@@ -109,8 +113,4 @@ fn normalize_profile(value: &str) -> String {
         "fallback2" | "fallback_2" | "1024" => "fallback2".to_string(),
         _ => "aggressive".to_string(),
     }
-}
-
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }

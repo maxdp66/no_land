@@ -34,6 +34,7 @@ use super::{app_config::WireGuardDefaults, remote_exec::RemoteExec};
 
 #[cfg(target_os = "windows")]
 use crate::utils::process::configure_no_window;
+use crate::utils::shell;
 
 #[cfg(target_os = "linux")]
 use super::os_detection::OsDetection;
@@ -896,18 +897,15 @@ fn launch_managed_gotatun_helper(config_path: &Path, launch_id: &str) -> AppResu
 
     #[cfg(target_os = "macos")]
     {
-        fn shell_quote(value: &str) -> String {
-            format!("'{}'", value.replace('\'', "'\"'\"'"))
-        }
         let command = [
-            shell_quote(&helper),
+            shell::quote(&helper),
             "run".to_string(),
             "--config".to_string(),
-            shell_quote(&config_path.display().to_string()),
+            shell::quote(&config_path.display().to_string()),
             "--state-dir".to_string(),
-            shell_quote(&runtime_dir.display().to_string()),
+            shell::quote(&runtime_dir.display().to_string()),
             "--launch-id".to_string(),
-            shell_quote(launch_id),
+            shell::quote(launch_id),
         ]
         .join(" ");
         let applescript = format!(
@@ -1501,13 +1499,13 @@ impl WireGuardService {
 
         let packages_needed = self.check_wireguard_packages_needed(remote).await?;
 
-        let escaped_server_config = shell_single_quote_escape(&server_config);
-
         // Write config file first (doesn't need dpkg lock)
         let config_script = format!(
-            "sudo mkdir -p /etc/wireguard && sudo bash -lc 'cat > /etc/wireguard/{}.conf <<\"EOF\"\n{}\nEOF'",
-            self.defaults.server_interface_name,
-            escaped_server_config
+            "sudo mkdir -p /etc/wireguard && sudo {}",
+            shell::bash_lc(&format!(
+                "cat > /etc/wireguard/{}.conf <<\"EOF\"\n{}\nEOF",
+                self.defaults.server_interface_name, server_config
+            ))
         );
 
         let remote_write_config = {
@@ -1781,10 +1779,12 @@ ExecStart=/bin/bash -lc "for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling
 WantedBy=multi-user.target
 "#;
 
-        let escaped = shell_single_quote_escape(cpu_governor_service);
         let command = format!(
-            "sudo bash -lc 'cat > /etc/systemd/system/set-cpu-governor.service <<\"EOF\"\n{}\nEOF'",
-            escaped
+            "sudo {}",
+            shell::bash_lc(&format!(
+                "cat > /etc/systemd/system/set-cpu-governor.service <<\"EOF\"\n{}\nEOF",
+                cpu_governor_service
+            ))
         );
 
         let output = {
@@ -1904,10 +1904,12 @@ ufw status | grep -q "deny in on {wg_interface} to any port 47998,47999,48000,48
             wg_port = server_listen_port,
         );
 
-        let escaped = shell_single_quote_escape(&firewall_setup);
         let command = format!(
-            "sudo bash -lc 'cat > /tmp/setup-firewall.sh <<\"EOF\"\n{}\nEOF\nchmod +x /tmp/setup-firewall.sh\n/tmp/setup-firewall.sh'",
-            escaped
+            "sudo {}",
+            shell::bash_lc(&format!(
+                "cat > /tmp/setup-firewall.sh <<\"EOF\"\n{}\nEOF\nchmod +x /tmp/setup-firewall.sh\n/tmp/setup-firewall.sh",
+                firewall_setup
+            ))
         );
 
         let output = {
@@ -1946,10 +1948,12 @@ net.ipv4.conf.{wg_iface}.rp_filter=0
 "
         );
 
-        let escaped = shell_single_quote_escape(&sysctl_config);
         let command = format!(
-            "sudo bash -lc 'cat > /etc/sysctl.d/99-noland-network.conf <<\"EOF\"\n{}\nEOF\nsudo sysctl --system >/dev/null'",
-            escaped
+            "sudo {}",
+            shell::bash_lc(&format!(
+                "cat > /etc/sysctl.d/99-noland-network.conf <<\"EOF\"\n{}\nEOF\nsudo sysctl --system >/dev/null",
+                sysctl_config
+            ))
         );
 
         let output = {
@@ -2219,10 +2223,11 @@ tc qdisc show dev "$EGRESS_IF"
 "#;
 
         let command = format!(
-            "sudo bash -lc 'cat > /usr/local/bin/noland-apply-qdisc.sh <<\"EOF\"\n{}\nEOF\nchmod +x /usr/local/bin/noland-apply-qdisc.sh\ncat > /usr/local/bin/noland-rollback-qdisc.sh <<\"EOF\"\n{}\nEOF\nchmod +x /usr/local/bin/noland-rollback-qdisc.sh\ncat > /etc/systemd/system/noland-qdisc.service <<\"EOF\"\n{}\nEOF\nsystemctl daemon-reload\nsystemctl enable --now noland-qdisc.service\n/usr/local/bin/noland-apply-qdisc.sh'",
-            shell_single_quote_escape(&script),
-            shell_single_quote_escape(rollback),
-            shell_single_quote_escape(service)
+            "sudo {}",
+            shell::bash_lc(&format!(
+                "cat > /usr/local/bin/noland-apply-qdisc.sh <<\"EOF\"\n{}\nEOF\nchmod +x /usr/local/bin/noland-apply-qdisc.sh\ncat > /usr/local/bin/noland-rollback-qdisc.sh <<\"EOF\"\n{}\nEOF\nchmod +x /usr/local/bin/noland-rollback-qdisc.sh\ncat > /etc/systemd/system/noland-qdisc.service <<\"EOF\"\n{}\nEOF\nsystemctl daemon-reload\nsystemctl enable --now noland-qdisc.service\n/usr/local/bin/noland-apply-qdisc.sh",
+                script, rollback, service
+            ))
         );
 
         let output = {
@@ -3099,10 +3104,6 @@ fn wireguard_network_cidr(value: &str) -> AppResult<String> {
 
 fn strip_cidr(ip: &str) -> String {
     ip.split('/').next().unwrap_or(ip).to_string()
-}
-
-fn shell_single_quote_escape(content: &str) -> String {
-    content.replace('\'', "'\"'\"'")
 }
 
 fn validate_firewall_interface(interface: &str) -> AppResult<()> {

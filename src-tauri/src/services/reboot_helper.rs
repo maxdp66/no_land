@@ -3,6 +3,7 @@ use std::time::Duration;
 use tokio::{sync::watch, time::sleep};
 use tracing::{info, warn};
 
+use crate::utils::shell;
 use crate::{
     errors::{AppError, AppResult},
     services::remote_exec::RemoteExec,
@@ -33,7 +34,7 @@ impl RebootHelperService {
         let old_boot_id = Self::preflight_reboot(remote, target_user).await?;
         let schedule_script =
             "set -euo pipefail; sync; nohup sh -c 'sleep 3; systemctl reboot' >/dev/null 2>&1 & echo REBOOT_SCHEDULED";
-        let schedule_command = format!("sudo bash -lc {}", shell_quote(schedule_script));
+        let schedule_command = format!("sudo bash -lc {}", shell::quote(schedule_script));
         let output = Self::probe_ssh(remote, &schedule_command, Duration::from_secs(30)).await?;
         let stdout = output.stdout.trim();
         let stderr = output.stderr.trim();
@@ -146,9 +147,9 @@ if [ -z "$DISPLAY_XAUTH" ]; then
     exit 2
 fi
 echo "REBOOT_PREFLIGHT_OK user=$TARGET_USER home=$TARGET_HOME xauthority=$DISPLAY_XAUTH""#,
-            target_user = shell_quote(target_user),
+            target_user = shell::quote(target_user),
         );
-        let command = format!("sudo bash -lc {}", shell_quote(&script));
+        let command = format!("sudo bash -lc {}", shell::quote(&script));
         let output = Self::probe_ssh(remote, &command, Duration::from_secs(30)).await?;
 
         if output.status_code != 0 || !output.stdout.contains("REBOOT_PREFLIGHT_OK") {
@@ -330,7 +331,7 @@ systemctl status noland-xorg.service --no-pager 2>/dev/null || true
 journalctl -u noland-xorg.service -b --no-pager -n 80 2>/dev/null || true
 tail -80 /var/log/Xorg.0.log 2>/dev/null || true
 exit 1"#;
-        let command = format!("sudo bash -lc {}", shell_quote(script));
+        let command = format!("sudo bash -lc {}", shell::quote(script));
         let output = Self::probe_ssh(remote, &command, Duration::from_secs(35)).await?;
 
         if output.stdout.contains("NOLAND_XORG_NOT_INSTALLED") {
@@ -363,7 +364,7 @@ if ! systemctl is-active --quiet noland-display-mode.service; then
     exit 1
 fi
 echo NOLAND_DISPLAY_MODE_READY"#;
-        let command = format!("sudo bash -lc {}", shell_quote(script));
+        let command = format!("sudo bash -lc {}", shell::quote(script));
         let output = Self::probe_ssh(remote, &command, Duration::from_secs(50)).await?;
         if output.status_code != 0 {
             return Err(AppError::Provisioning(format!(
@@ -455,10 +456,10 @@ if printf '%s\n' "$CURRENT_LOGS" | grep -Eqi 'Unable to open display|Failed to (
     exit 1
 fi
 echo "SUNSHINE_POST_REBOOT_OK web=47990 rtsp=48010 xauthority=$DISPLAY_XAUTH""#,
-            target_user = shell_quote(target_user),
-            display_xauthority = shell_quote(display_xauthority),
+            target_user = shell::quote(target_user),
+            display_xauthority = shell::quote(display_xauthority),
         );
-        let restart_command = format!("sudo bash -lc {}", shell_quote(&script));
+        let restart_command = format!("sudo bash -lc {}", shell::quote(&script));
         let output = Self::probe_ssh(remote, &restart_command, Duration::from_secs(90)).await?;
         if output.status_code != 0 || !output.stdout.contains("SUNSHINE_POST_REBOOT_OK") {
             return Err(AppError::Provisioning(format!(
@@ -486,7 +487,13 @@ echo "SUNSHINE_POST_REBOOT_OK web=47990 rtsp=48010 xauthority=$DISPLAY_XAUTH""#,
         let bus_path = format!("{runtime_dir}/bus");
 
         let check_command = format!(
-            "sudo bash -lc 'TARGET_USER=\"{target_user}\"; RUNTIME_DIR=\"{runtime_dir}\"; BUS_PATH=\"{bus_path}\"; mkdir -p \"$RUNTIME_DIR\"; chown \"$TARGET_USER:$(id -gn $TARGET_USER)\" \"$RUNTIME_DIR\"; chmod 700 \"$RUNTIME_DIR\"; run_user() {{ sudo -u \"$TARGET_USER\" env XDG_RUNTIME_DIR=\"$RUNTIME_DIR\" DBUS_SESSION_BUS_ADDRESS=unix:path=\"$BUS_PATH\" \"$@\"; }}; PW=$(run_user systemctl --user is-active pipewire 2>/dev/null || true); PWP=$(run_user systemctl --user is-active pipewire-pulse 2>/dev/null || true); WP=$(run_user systemctl --user is-active wireplumber 2>/dev/null || true); SINK_OK=0; if run_user pactl list short sinks 2>/dev/null | grep -Eq \"^[0-9]+[[:space:]]+sunshine_audio([[:space:]]|$)\"; then SINK_OK=1; fi; if [ -S \"$BUS_PATH\" ]; then echo \"session_bus=1\"; else echo \"session_bus=0\"; fi; if [ \"$PW\" = \"active\" ] && [ \"$PWP\" = \"active\" ] && [ \"$WP\" = \"active\" ] && [ \"$SINK_OK\" = \"1\" ]; then echo AUDIO_READY; else echo AUDIO_NOT_READY; echo \"pipewire=$PW\"; echo \"pipewire_pulse=$PWP\"; echo \"wireplumber=$WP\"; echo \"sunshine_audio_sink=$SINK_OK\"; fi'"
+            "sudo {}",
+            shell::bash_lc(&format!(
+                "TARGET_USER={target_user}; RUNTIME_DIR={runtime_dir}; BUS_PATH={bus_path}; mkdir -p \"$RUNTIME_DIR\"; chown \"$TARGET_USER:$(id -gn $TARGET_USER)\" \"$RUNTIME_DIR\"; chmod 700 \"$RUNTIME_DIR\"; run_user() {{ sudo -u \"$TARGET_USER\" env XDG_RUNTIME_DIR=\"$RUNTIME_DIR\" DBUS_SESSION_BUS_ADDRESS=unix:path=\"$BUS_PATH\" \"$@\"; }}; PW=$(run_user systemctl --user is-active pipewire 2>/dev/null || true); PWP=$(run_user systemctl --user is-active pipewire-pulse 2>/dev/null || true); WP=$(run_user systemctl --user is-active wireplumber 2>/dev/null || true); SINK_OK=0; if run_user pactl list short sinks 2>/dev/null | grep -Eq \"^[0-9]+[[:space:]]+sunshine_audio([[:space:]]|$)\"; then SINK_OK=1; fi; if [ -S \"$BUS_PATH\" ]; then echo \"session_bus=1\"; else echo \"session_bus=0\"; fi; if [ \"$PW\" = \"active\" ] && [ \"$PWP\" = \"active\" ] && [ \"$WP\" = \"active\" ] && [ \"$SINK_OK\" = \"1\" ]; then echo AUDIO_READY; else echo AUDIO_NOT_READY; echo \"pipewire=$PW\"; echo \"pipewire_pulse=$PWP\"; echo \"wireplumber=$WP\"; echo \"sunshine_audio_sink=$SINK_OK\"; fi",
+                target_user = shell::quote(target_user),
+                runtime_dir = shell::quote(&runtime_dir),
+                bus_path = shell::quote(&bus_path),
+            ))
         );
 
         let first = Self::probe_ssh(remote, &check_command, Duration::from_secs(20)).await?;
@@ -555,11 +562,11 @@ if ! run_user pactl list short sinks 2>/dev/null | grep -Eq '^[0-9]+[[:space:]]+
 fi
 run_user pactl set-default-sink sunshine_audio
 "#,
-            target_user = shell_quote(target_user),
-            runtime_dir = shell_quote(&runtime_dir),
-            bus_path = shell_quote(&bus_path),
+            target_user = shell::quote(target_user),
+            runtime_dir = shell::quote(&runtime_dir),
+            bus_path = shell::quote(&bus_path),
         );
-        let repair_command = format!("sudo bash -lc {}", shell_quote(&repair_script));
+        let repair_command = format!("sudo bash -lc {}", shell::quote(&repair_script));
         let _ = Self::probe_ssh(remote, &repair_command, Duration::from_secs(25)).await?;
 
         let second = Self::probe_ssh(remote, &check_command, Duration::from_secs(20)).await?;
@@ -572,7 +579,13 @@ run_user pactl set-default-sink sunshine_audio
         }
 
         let diag_command = format!(
-            "sudo bash -lc 'TARGET_USER=\"{target_user}\"; RUNTIME_DIR=\"{runtime_dir}\"; BUS_PATH=\"{bus_path}\"; TARGET_HOME=$(getent passwd \"$TARGET_USER\" | cut -d: -f6); run_user() {{ sudo -u \"$TARGET_USER\" env XDG_RUNTIME_DIR=\"$RUNTIME_DIR\" DBUS_SESSION_BUS_ADDRESS=unix:path=\"$BUS_PATH\" \"$@\"; }}; echo --- session-bus ---; test -S \"$BUS_PATH\" && echo BUS_OK || echo BUS_MISSING; echo --- user-audio-status ---; run_user systemctl --user status pipewire pipewire-pulse wireplumber --no-pager 2>/dev/null || true; echo --- pactl-info ---; run_user pactl info 2>/dev/null || true; echo --- sinks ---; run_user pactl list short sinks 2>/dev/null || true; echo --- sources ---; run_user pactl list short sources 2>/dev/null || true; echo --- sunshine-audio-dropin ---; if [ -f \"$TARGET_HOME/.config/pipewire/pipewire.conf.d/70-noland-sunshine-audio.conf\" ]; then run_user cat \"$TARGET_HOME/.config/pipewire/pipewire.conf.d/70-noland-sunshine-audio.conf\"; else echo MISSING; fi'"
+            "sudo {}",
+            shell::bash_lc(&format!(
+                "TARGET_USER={target_user}; RUNTIME_DIR={runtime_dir}; BUS_PATH={bus_path}; TARGET_HOME=$(getent passwd \"$TARGET_USER\" | cut -d: -f6); run_user() {{ sudo -u \"$TARGET_USER\" env XDG_RUNTIME_DIR=\"$RUNTIME_DIR\" DBUS_SESSION_BUS_ADDRESS=unix:path=\"$BUS_PATH\" \"$@\"; }}; echo --- session-bus ---; test -S \"$BUS_PATH\" && echo BUS_OK || echo BUS_MISSING; echo --- user-audio-status ---; run_user systemctl --user status pipewire pipewire-pulse wireplumber --no-pager 2>/dev/null || true; echo --- pactl-info ---; run_user pactl info 2>/dev/null || true; echo --- sinks ---; run_user pactl list short sinks 2>/dev/null || true; echo --- sources ---; run_user pactl list short sources 2>/dev/null || true; echo --- sunshine-audio-dropin ---; if [ -f \"$TARGET_HOME/.config/pipewire/pipewire.conf.d/70-noland-sunshine-audio.conf\" ]; then run_user cat \"$TARGET_HOME/.config/pipewire/pipewire.conf.d/70-noland-sunshine-audio.conf\"; else echo MISSING; fi",
+                target_user = shell::quote(target_user),
+                runtime_dir = shell::quote(&runtime_dir),
+                bus_path = shell::quote(&bus_path),
+            ))
         );
         let diag = Self::probe_ssh(remote, &diag_command, Duration::from_secs(20)).await?;
 
@@ -614,10 +627,10 @@ for candidate in /etc/X11/.Xauthority-noland "$USER_XAUTH"; do
     fi
 done
 exit 1"#,
-            target_user = shell_quote(target_user),
-            user_xauth = shell_quote(&format!("{target_home}/.Xauthority")),
+            target_user = shell::quote(target_user),
+            user_xauth = shell::quote(&format!("{target_home}/.Xauthority")),
         );
-        let command = format!("sudo bash -lc {}", shell_quote(&script));
+        let command = format!("sudo bash -lc {}", shell::quote(&script));
 
         for attempt in 1..=DISPLAY_ATTEMPTS {
             match Self::probe_ssh(remote, &command, Duration::from_secs(30)).await {
@@ -744,10 +757,6 @@ fn parse_display_xauthority(stdout: &str) -> Option<String> {
         let path = line.trim().strip_prefix(DISPLAY_XAUTHORITY_PREFIX)?.trim();
         (!path.is_empty()).then(|| path.to_string())
     })
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn is_ready_system_state(stdout: &str) -> bool {
