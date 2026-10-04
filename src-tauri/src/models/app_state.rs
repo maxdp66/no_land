@@ -32,6 +32,8 @@ pub struct PersistedAppState {
     pub auto_shutdown: AutoShutdownState,
     #[serde(default)]
     pub cloudflare_turn: CloudflareTurnSettingsState,
+    #[serde(default)]
+    pub external_moonlight: ExternalMoonlightSettings,
     pub provisioned_servers: Vec<ProvisionedServerState>,
     #[serde(default)]
     pub post_wireguard_setup: PostWireGuardSetupState,
@@ -62,6 +64,7 @@ impl Default for PersistedAppState {
             shared_storage_credentials: SharedStorageCredentialState::default(),
             auto_shutdown: AutoShutdownState::default(),
             cloudflare_turn: CloudflareTurnSettingsState::default(),
+            external_moonlight: ExternalMoonlightSettings::default(),
             provisioned_servers: Vec::new(),
             post_wireguard_setup: PostWireGuardSetupState::default(),
             orchestration_state: OrchestrationState::Idle,
@@ -69,6 +72,15 @@ impl Default for PersistedAppState {
             last_error: None,
         }
     }
+}
+
+/// A user-installed Moonlight client used instead of the embedded stream client.
+/// `None` means the bundled client is used and no custom install was chosen.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalMoonlightSettings {
+    #[serde(default)]
+    pub executable_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

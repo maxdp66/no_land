@@ -1,5 +1,6 @@
 pub mod auto_shutdown;
 pub mod connection;
+pub mod external_moonlight;
 pub mod launch_library;
 pub mod shared_storage;
 
@@ -10,6 +11,10 @@ pub use self::connection::{
     clear_cloudflare_turn_settings, get_cloudflare_turn_settings, get_instance_connection_status,
     repair_instance_connection, save_cloudflare_turn_settings, set_instance_connection_preference,
     test_cloudflare_turn_settings,
+};
+pub use self::external_moonlight::{
+    external_moonlight_get_connection_info, external_moonlight_launch, external_moonlight_pair,
+    external_moonlight_set_executable_path, external_moonlight_submit_pin,
 };
 pub use self::launch_library::{
     get_instance_launch_library, get_launch_instance_software_job, get_software_artwork,

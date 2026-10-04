@@ -6,6 +6,7 @@ import type {
   LifecycleAgentStatus,
   ManualLocationInput,
   MoonlightPreferences,
+  ExternalMoonlightConnectionInfo,
   OfferCandidate,
   OnboardingPayload,
   PlatformCredentialsUpdate,
@@ -410,6 +411,32 @@ export async function updateMoonlightPreferences(
   return invokeSafe<PersistedAppState>("update_moonlight_preferences", {
     payload,
   });
+}
+
+export async function externalMoonlightGetConnectionInfo(): Promise<ExternalMoonlightConnectionInfo> {
+  return invokeSafe<ExternalMoonlightConnectionInfo>(
+    "external_moonlight_get_connection_info",
+  );
+}
+
+export async function externalMoonlightSetExecutablePath(
+  path: string | null,
+): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("external_moonlight_set_executable_path", {
+    path,
+  });
+}
+
+export async function externalMoonlightSubmitPin(pin: string): Promise<void> {
+  await invokeSafe<void>("external_moonlight_submit_pin", { pin });
+}
+
+export async function externalMoonlightPair(): Promise<void> {
+  await invokeSafe<void>("external_moonlight_pair");
+}
+
+export async function externalMoonlightLaunch(appName: string | null): Promise<void> {
+  await invokeSafe<void>("external_moonlight_launch", { appName });
 }
 
 export async function setInstanceMoonlightPipelineEnabled(

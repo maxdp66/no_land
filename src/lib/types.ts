@@ -511,6 +511,28 @@ export interface MoonlightPreferences {
   showInputDebugHud: number;
 }
 
+export interface ExternalMoonlightSettings {
+  executablePath: string | null;
+}
+
+export interface ExternalMoonlightPort {
+  port: number;
+  protocol: "TCP" | "UDP";
+  purpose: string;
+}
+
+export interface ExternalMoonlightConnectionInfo {
+  host: string;
+  webUiUrl: string;
+  sunshineUsername: string;
+  sunshinePassword: string;
+  ports: ExternalMoonlightPort[];
+  tunnelReachable: boolean;
+  activeInstanceId: number | null;
+  configuredExecutablePath: string | null;
+  detectedExecutablePath: string | null;
+}
+
 export type MoonlightPacingMode =
   | "off"
   | "automatic"
@@ -691,6 +713,7 @@ export interface PersistedAppState {
   sunshine: SunshineState;
   moonlight: MoonlightState;
   moonlightPreferences: MoonlightPreferences;
+  externalMoonlight?: ExternalMoonlightSettings;
   sharedStorage: SharedStorageState;
   sharedStorageProfiles?: ProfileReference[];
   autoShutdown: AutoShutdownState;

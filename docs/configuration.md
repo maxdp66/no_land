@@ -93,6 +93,17 @@ Backend config is defined in `src-tauri/src/services/app_config.rs` and reads en
 - The primary streaming client and GotaTun tunnel engine are embedded in Noland Connect.
 - Users are not expected to install Moonlight, WireGuard, GotaTun, `wg`, or `wg-quick`.
 
+## Using your own Moonlight (optional)
+
+The embedded client stays the default for Play. Each instance card also has a "Use your own Moonlight" button:
+
+- **Moonlight app**: `externalMoonlight.executablePath` in app state. When unset, Noland looks in the usual install locations (Windows `Program Files\Moonlight Game Streaming`, macOS `/Applications/Moonlight.app`, Linux `/usr/bin/moonlight[-qt]` and the Flatpak export). macOS `.app` bundles are accepted.
+- **Pair automatically** runs `moonlight pair 10.77.0.1 --pin <pin>` and approves that PIN through Sunshine's `/api/pin`.
+- **Stream Desktop** runs `moonlight stream 10.77.0.1 Desktop`.
+- **Connect manually** shows the address, ports and Sunshine web UI credentials, and approves a PIN typed from any Moonlight client.
+
+Sunshine is only reachable at the tunnel address `10.77.0.1`, which is routed by Noland's managed OS-level tunnel adapter. Manual connections therefore work from the computer running Noland, while the tunnel is up. Other devices on the LAN cannot connect this way.
+
 ## Local managed components (client side)
 
 Checked by `local_environment_preflight`:
