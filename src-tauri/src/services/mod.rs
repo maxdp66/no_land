@@ -1,6 +1,7 @@
 pub mod app_config;
 pub mod app_context;
 pub mod audio_latency;
+pub mod browser;
 pub mod clipboard;
 pub mod cloudflare_turn;
 pub mod connection_manager;
@@ -34,5 +35,6 @@ pub mod ssh_keys;
 pub mod state_store;
 pub mod sunshine;
 pub mod vast_api;
+pub mod vm_agents;
 pub mod wireguard;
 mod wireguard_mtu;

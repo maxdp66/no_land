@@ -78,8 +78,34 @@ export DEBIAN_FRONTEND=noninteractive
 export RUSTUP_HOME=/root/.rustup
 export CARGO_HOME=/root/.cargo
 export PATH="$CARGO_HOME/bin:$PATH"
+rm -rf /tmp/noland-mic-build
+mkdir -p /tmp/noland-mic-build
+cd /tmp/noland-mic-build
+tar -xzf /tmp/noland-mic-agent-src.tgz 2>/tmp/noland-mic-tar.log
+PREBUILT=/tmp/noland-mic-build/vm-cloud-mic-agent/prebuilt/noland-mic-receiver
+RUNTIME_PACKAGES="pipewire pipewire-pulse wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good pulseaudio-utils python3 ufw"
+missing_packages() {
+  for pkg in "$@"; do
+    dpkg-query -W -f="\${Status}" "$pkg" 2>/dev/null | grep -q "install ok installed" || printf "%s " "$pkg"
+  done
+}
+# Use the CI-built receiver when this VM can run it; otherwise build it here.
+if [ "$(uname -m)" = x86_64 ] && [ -x "$PREBUILT" ]; then
+  missing=$(missing_packages $RUNTIME_PACKAGES)
+  if [ -n "$missing" ]; then
+    apt-get -o DPkg::Lock::Timeout=600 update -y
+    apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends $missing
+  fi
+  if ! ldd "$PREBUILT" 2>/dev/null | grep -q "not found"; then
+    cp "$PREBUILT" /tmp/noland-mic-receiver
+    chmod +x /tmp/noland-mic-receiver
+    echo "NOLAND_MIC_RECEIVER_PREBUILT"
+    exit 0
+  fi
+  echo "Prebuilt mic receiver is missing shared libraries on this VM; building from source" >&2
+fi
 apt-get update -y
-apt-get install -y --no-install-recommends build-essential pkg-config curl clang ca-certificates libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev pipewire pipewire-pulse wireplumber gstreamer1.0-tools gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good pulseaudio-utils python3 ufw
+apt-get install -y --no-install-recommends build-essential pkg-config curl clang ca-certificates libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev $RUNTIME_PACKAGES
 RUST_TOOLCHAIN=1.88.0
 if ! command -v rustup >/dev/null 2>&1; then
   curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
@@ -87,10 +113,6 @@ fi
 rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal >/tmp/noland-rustup.stdout.log 2>/tmp/noland-rustup.stderr.log
 cargo "+$RUST_TOOLCHAIN" --version >/tmp/noland-cargo-version.log 2>&1
 rustc "+$RUST_TOOLCHAIN" --version >/tmp/noland-rustc-version.log 2>&1
-rm -rf /tmp/noland-mic-build
-mkdir -p /tmp/noland-mic-build
-cd /tmp/noland-mic-build
-tar -xzf /tmp/noland-mic-agent-src.tgz 2>/tmp/noland-mic-tar.log
 CARGO_LOCK_FLAG=
 if [ -f /tmp/noland-mic-build/vm-cloud-mic-agent/Cargo.lock ]; then
   CARGO_LOCK_FLAG=--locked
@@ -343,6 +365,11 @@ async fn create_receiver_source_bundle() -> AppResult<PathBuf> {
         let encoder = GzEncoder::new(output, Compression::default());
         let mut archive = tar::Builder::new(encoder);
         append_source_tree(&mut archive, &source_dir, Path::new(&source_name), true)?;
+        super::vm_agents::append_prebuilt(
+            &mut archive,
+            Path::new(&source_name),
+            &[super::vm_agents::MIC_RECEIVER],
+        )?;
         let encoder = archive.into_inner().map_err(|error| {
             AppError::Command(format!("Failed finalizing mic source tar archive: {error}"))
         })?;

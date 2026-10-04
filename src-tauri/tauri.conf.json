@@ -61,7 +61,8 @@
       "../state-agent/rust-toolchain.toml",
       "../state-agent/crates/**/*",
       "../state-agent/scripts/**/*",
-      "../state-agent/systemd/**/*"
+      "../state-agent/systemd/**/*",
+      "vm-agents/**/*"
     ],
     "linux": {
       "deb": {

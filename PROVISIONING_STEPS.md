@@ -114,6 +114,16 @@ The provisioning flow consists of these main stages:
 
 ---
 
+## Stage 5.1: Packages, Browser and VM Agents
+
+**Purpose:** Prepare everything the later stages need in as few round trips as possible.
+
+1. **One apt pass.** Refresh the package index once and install every missing runtime package the later stages use (X11 tools, PipeWire, WireGuard tools, ufw, GStreamer runtime, python3, curl). Later stages find them installed and skip their own `apt-get update`. Best effort: if it fails, each stage installs what it needs as before.
+2. **Brave browser.** Install Brave from its official apt repository, make it the user's default browser, and remove Google Chrome if the image shipped it.
+3. **VM agents.** Install the state, lifecycle, network and microphone agents. Release builds of the app bundle these as binaries built once in CI (`scripts/ci/build-vm-agents.sh`, verified against `SHA256SUMS`), so the VM no longer installs Rust or compiles them. The source tree is still uploaded, and the VM builds from it only when no usable binary is shipped (development builds, a non-x86_64 VM, or missing shared libraries).
+
+---
+
 ## Stage 6: NVIDIA Headless Setup (TwinView)
 
 **Purpose:** Configure NVIDIA GPU for headless streaming using TwinView virtual display.
@@ -212,15 +222,9 @@ sudo cp /root/.Xauthority /run/user/<uid>/.Xauthority
 sudo chown <user>:<user> /run/user/<uid>/.Xauthority
 ```
 
-### Step 6.9: Hold Driver, Kernel and Sunshine Packages
+### Step 6.9: Driver Check on Reconnect
 
-So a manual `apt upgrade` on the instance can't swap the NVIDIA driver or kernel under the running display stack (which shows up as a black stream until reboot), the installed NVIDIA driver packages, kernel meta packages (`linux-generic`, `linux-image-virtual`, …) and `sunshine` are put on hold:
-
-```bash
-sudo apt-mark hold <matching installed packages>
-```
-
-Everything else still upgrades normally. On every reconnect the app also re-runs `nvidia-smi`; a driver/library version mismatch triggers a reboot before streaming, and the holds are re-applied.
+A manual `apt upgrade` on the instance can replace the NVIDIA driver while the old kernel module stays loaded, which shows up as a black stream. On every reconnect the app re-runs `nvidia-smi`; a driver/library version mismatch triggers a reboot so the upgraded driver loads before streaming.
 
 ### Step 6.10: Create User Config Directories
 
