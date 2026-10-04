@@ -40,6 +40,7 @@ import { SharedStorageExportModal } from "../shared-storage-manager/SharedStorag
 import { InstanceCardActions } from "../shared-storage-manager/InstanceCardActions";
 import { InstanceDisplayModal } from "./InstanceDisplayModal";
 import { InstanceMoonlightOptionsModal } from "./InstanceMoonlightOptionsModal";
+import { ExternalMoonlightModal } from "./ExternalMoonlightModal";
 import { InstancePerformanceToggle } from "./InstancePerformanceToggle";
 import { SharedStorageSyncModal } from "../shared-storage-manager/SharedStorageSyncModal";
 import { LaunchLibraryModal } from "../launch-library/LaunchLibraryModal";
@@ -220,6 +221,8 @@ export function DashboardScreen({
   const [displayInstanceId, setDisplayInstanceId] = useState<number | null>(null);
   const [moonlightOptionsInstanceId, setMoonlightOptionsInstanceId] =
     useState<number | null>(null);
+  const [externalMoonlightInstanceId, setExternalMoonlightInstanceId] =
+    useState<number | null>(null);
   const [launchLibraryInstanceId, setLaunchLibraryInstanceId] = useState<number | null>(null);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [healthModalOpen, setHealthModalOpen] = useState(false);
@@ -251,6 +254,9 @@ export function DashboardScreen({
   );
   const moonlightOptionsInstance = rentedInstances.find(
     (instance) => instance.instanceId === moonlightOptionsInstanceId,
+  );
+  const externalMoonlightInstance = rentedInstances.find(
+    (instance) => instance.instanceId === externalMoonlightInstanceId,
   );
   const uploadInstance = rentedInstances.find(
     (instance) => instance.instanceId === uploadInstanceId,
@@ -731,6 +737,18 @@ export function DashboardScreen({
                       >
                         <SpriteIcon icon="settings" className="h-5 w-5" />
                       </Button>
+                      <Button
+                        variant="ghost"
+                        aria-label={`Use your own Moonlight for ${instance.label}`}
+                        title="Use your own Moonlight or connect manually"
+                        className="h-8 w-8 rounded border border-[#3a4068] p-0"
+                        disabled={busy || !isActive}
+                        onClick={() =>
+                          setExternalMoonlightInstanceId(instance.instanceId)
+                        }
+                      >
+                        <SpriteIcon icon="moonlight" className="h-5 w-5" />
+                      </Button>
                     </div>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[1rem] leading-tight text-[#bfd3ee]">
@@ -1154,6 +1172,13 @@ export function DashboardScreen({
         <InstanceMoonlightOptionsModal
           instance={moonlightOptionsInstance}
           onClose={() => setMoonlightOptionsInstanceId(null)}
+        />
+      ) : null}
+
+      {externalMoonlightInstance ? (
+        <ExternalMoonlightModal
+          instance={externalMoonlightInstance}
+          onClose={() => setExternalMoonlightInstanceId(null)}
         />
       ) : null}
 

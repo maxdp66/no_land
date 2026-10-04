@@ -31,8 +31,8 @@ use super::{
     wireguard_mtu::tune_connected_tunnel,
 };
 
-const TUNNEL_HOST: &str = "10.77.0.1";
-const SUNSHINE_API_PORT: u16 = 47990;
+pub(crate) const TUNNEL_HOST: &str = "10.77.0.1";
+pub(crate) const SUNSHINE_API_PORT: u16 = 47990;
 const REACHABILITY_PORTS: [u16; 3] = [47990, 47989, 47984];
 
 const SUNSHINE_API_READY_RETRIES: usize = 60;
