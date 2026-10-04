@@ -68,7 +68,8 @@
       "deb": {
         "files": {
           "/usr/share/metainfo/com.noland.connect.metainfo.xml": "packaging/com.noland.connect.metainfo.xml",
-          "/usr/share/doc/noland-connect/copyright": "packaging/copyright"
+          "/usr/share/doc/noland-connect/copyright": "packaging/copyright",
+          "/usr/share/lintian/overrides/noland-connect": "packaging/lintian-overrides"
         },
         "section": "net",
         "changelog": "packaging/changelog",
