@@ -8,12 +8,12 @@ case "$architecture" in
   x64)
     tool_arch=x86_64
     output_arch=x86_64
-    expected_sha256=a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0
+    expected_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
     ;;
   arm64)
     tool_arch=aarch64
     output_arch=aarch64
-    expected_sha256=1b00524ba8c6b678dc15ef88a5c25ec24def36cdfc7e3abb32ddcd068e8007fe
+    expected_sha256=f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
     ;;
   *)
     echo "Unsupported AppImage architecture: $architecture" >&2
@@ -78,9 +78,13 @@ test -e "$appdir/$desktop_name"
 file "$appdir/.DirIcon" | grep -q 'PNG image data'
 
 tool="$work_dir/appimagetool-${tool_arch}.AppImage"
-tool_url="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${tool_arch}.AppImage"
+# Pinned to a tagged release: the "continuous" build is replaced in place, which breaks the hash check.
+tool_url="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${tool_arch}.AppImage"
 curl --fail --location --retry 3 --silent --show-error "$tool_url" --output "$tool"
-printf '%s  %s\n' "$expected_sha256" "$tool" | sha256sum --check --status
+if ! printf '%s  %s\n' "$expected_sha256" "$tool" | sha256sum --check --status; then
+  echo "appimagetool checksum mismatch for $tool_url" >&2
+  exit 1
+fi
 chmod +x "$tool"
 
 tool_extract_dir="$work_dir/appimagetool"
