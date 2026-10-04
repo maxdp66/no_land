@@ -271,6 +271,12 @@ No Land's display-manager masks and Sunshine configuration/pairing are retained.
 The original Sunshine package is preserved locally in case Ubuntu removes it.
 No `autoremove` is run. Release-specific third-party repositories disabled by
 Ubuntu remain disabled; review their Noble support before re-enabling them.
+Recovery first aligns streaming libraries with official Noble packages, then
+restores KDE in a separate transaction with its QML and KPipeWire dependencies.
+The same package recovery runs after reboot before readiness checks, including
+when resuming a verification phase created by an older helper. Required desktop
+and streaming packages are marked manually installed to protect them from later
+APT autoremove; they remain eligible for normal security updates.
 
 The root-owned executable is `/usr/local/lib/noland/upgrade-vm.sh`. Provisioning
 adds a sudoers rule for the streaming account allowing only that helper with no

@@ -50,14 +50,39 @@ dpkg-query() { echo 'install ok installed'; }
 apt_run() { printf 'APT %s\\n' "$*"; }
 dpkg() { :; }
 test() { :; }
+apt-mark() { printf 'MARK %s\\n' "$*"; }
 repair_packages
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines()
         self.assertIn('-s --fix-broken --allow-downgrades --no-remove install', lines[0])
         self.assertIn('-y --fix-broken --allow-downgrades --no-remove install', lines[1])
-        for package in ("libspa-0.2-bluetooth", "libspa-0.2-jack", "plasma-workspace", "pipewire-pulse"):
+        for package in ("libspa-0.2-bluetooth", "libspa-0.2-jack", "pipewire-alsa", "pipewire-pulse"):
             self.assertIn(f"{package}=1.0.5", lines[1])
+        desktop_simulation = next(line for line in lines if "-s " in line and "plasma-workspace=" in line)
+        desktop_install = next(line for line in lines if "-y " in line and "plasma-workspace=" in line)
+        self.assertGreater(lines.index(desktop_simulation), lines.index(lines[1]))
+        for package in ("qml-module-org-kde-pipewire", "libkpipewire5", "libkpipewiredmabuf5", "libkpipewirerecord5"):
+            self.assertIn(f"{package}=1.0.5", desktop_install)
+        self.assertNotIn("plasma-workspace=", lines[1])
+        self.assertIn('MARK manual sunshine plasma-workspace plasma-desktop kwin-x11 pipewire pipewire-pulse wireplumber', lines)
+
+    def test_desktop_solver_failure_does_not_block_library_repair_or_install_kde(self):
+        result = bash("""
+noble_version() { echo 1.0.5; }
+dpkg-query() { echo 'install ok installed'; }
+dpkg() { :; }
+apt_run() {
+  printf 'APT %s\\n' "$*"
+  if [[ "$*" == *plasma-workspace* && "$*" == -s* ]]; then return 100; fi
+}
+repair_packages
+""")
+        self.assertEqual(result.returncode, 100)
+        installs = [line for line in result.stdout.splitlines() if line.startswith('APT -y')]
+        self.assertEqual(len(installs), 1)
+        self.assertIn('libpipewire-0.3-0t64=', installs[0])
+        self.assertNotIn('plasma-workspace=', installs[0])
 
     def test_failed_simulation_prevents_real_install(self):
         result = bash('''
@@ -145,6 +170,10 @@ worker
             (state / 'reboot-from').write_text('previous-boot')
             result = bash(f'''
 STATE='{state}'
+os_codename() {{ echo noble; }}
+disable_stale_wine_source() {{ :; }}
+apt_run() {{ :; }}
+repair_packages() {{ echo REPAIR_PACKAGES_AFTER_BOOT; }}
 verify() {{ echo VERIFIED; }}
 systemctl() {{ echo "SERVICE $*"; }}
 worker
@@ -152,7 +181,28 @@ worker
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((state / 'phase').read_text(), 'complete')
             self.assertIn('VERIFIED', result.stdout)
+            self.assertLess(result.stdout.index('REPAIR_PACKAGES_AFTER_BOOT'), result.stdout.index('VERIFIED'))
             self.assertIn('SERVICE disable noland-distro-upgrade.service', result.stdout)
+
+    def test_post_reboot_package_failure_never_marks_upgrade_complete(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = pathlib.Path(folder)
+            (state / 'phase').write_text('verify')
+            (state / 'user').write_text('root')
+            (state / 'reboot-from').write_text('previous-boot')
+            result = bash(f'''
+STATE='{state}'
+os_codename() {{ echo noble; }}
+disable_stale_wine_source() {{ :; }}
+apt_run() {{ :; }}
+repair_packages() {{ return 100; }}
+verify() {{ echo UNEXPECTED_VERIFY; }}
+systemctl() {{ echo "UNEXPECTED_SERVICE $*"; }}
+worker
+''')
+            self.assertEqual(result.returncode, 100)
+            self.assertEqual((state / 'phase').read_text(), 'failed')
+            self.assertNotIn('UNEXPECTED_', result.stdout)
 
 
 if __name__ == "__main__":
