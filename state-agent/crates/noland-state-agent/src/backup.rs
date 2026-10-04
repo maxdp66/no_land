@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+#[cfg(test)]
+use std::collections::BTreeSet;
+use std::collections::{BTreeMap, HashMap};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -6,12 +8,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use noland_cas::{chunk_file_streaming, LocalCas};
+use noland_cas::chunk_reader;
 use noland_classifier::Classifier;
 use noland_crypto::MasterKey;
-use noland_pack::{pack_chunk_files_with_limits, BuiltPack, PackIndexEntry};
+#[cfg(test)]
+use noland_pack::{pack_chunk_files_with_limits, BuiltPack};
+use noland_pack::{PackBuilder, PackIndexEntry};
 use noland_rclone_adapter::{EphemeralRcloneSession, ProviderRootIdentity, TransferTuning};
-use noland_snapshot::{create_view, discard};
 use noland_state_core::*;
 use noland_storage::{
     commit_bundle_with_index_for_operation, read_committed_manifest, read_pack_index,
@@ -109,7 +112,6 @@ struct RemoteChunkIndex {
 struct HashJob {
     app_id: AppId,
     source: PathBuf,
-    staged: PathBuf,
     record: PathRecord,
     association: PathAssociation,
     logical: LogicalPath,
@@ -128,13 +130,9 @@ struct HashMetricsDelta {
 
 #[derive(Debug)]
 struct HashResult {
-    source: PathBuf,
     manifest_file: ManifestFile,
     file_state: FileStateRecord,
-    new_chunks: Vec<(String, PathBuf)>,
     remote_entries: Vec<PackIndexEntry>,
-    cas_observations: Vec<LocalCasEntry>,
-    small_file_chunk_hashes: Vec<String>,
     metrics: HashMetricsDelta,
 }
 
@@ -150,39 +148,13 @@ impl RemoteChunkIndex {
     }
 }
 
-fn hashing_worker_count(performance: BackupPerformanceMode) -> usize {
-    if let Ok(value) = std::env::var("NOLAND_HASH_WORKERS") {
-        if let Ok(value) = value.parse::<usize>() {
-            return value.clamp(1, 8);
-        }
-    }
-    let available = std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(4);
-    match performance {
-        BackupPerformanceMode::Balanced => 4.min(available).max(1),
-        BackupPerformanceMode::Fast | BackupPerformanceMode::Full => 8.min(available).max(1),
-    }
-}
-
-fn pack_worker_count(performance: BackupPerformanceMode) -> usize {
-    if let Ok(value) = std::env::var("NOLAND_PACK_WORKERS") {
-        if let Ok(value) = value.parse::<usize>() {
-            return value.clamp(1, 4);
-        }
-    }
-    match performance {
-        BackupPerformanceMode::Balanced => 2,
-        BackupPerformanceMode::Fast | BackupPerformanceMode::Full => 4,
-    }
-}
-
 type CancellationCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
 fn cancellation_error() -> StateError {
     StateError::Invalid("backup cancellation requested".into())
 }
 
+#[cfg(test)]
 fn plan_pack_chunks(
     mut chunks: Vec<(String, PathBuf)>,
     target: u64,
@@ -226,6 +198,7 @@ fn plan_pack_chunks(
     Ok(plans)
 }
 
+#[cfg(test)]
 fn build_packs_parallel(
     dest_dir: &Path,
     master: &MasterKey,
@@ -343,18 +316,17 @@ fn build_packs_parallel(
     Ok(built)
 }
 
-fn hash_one_file(
+fn hash_one_file_with_sink(
     job: HashJob,
-    cas: &LocalCas,
     inherited_hashes: &std::collections::HashSet<String>,
     remote_chunks: &RemoteChunkIndex,
-    observed_at: chrono::DateTime<Utc>,
+    sink: &mut dyn FnMut(&ChunkRef, &[u8]) -> Result<()>,
 ) -> Result<HashResult> {
-    let mut new_chunks = Vec::new();
+    let mut input = std::fs::File::open(&job.source)?;
+    let before = input.metadata()?;
     let mut remote_entries = Vec::new();
-    let mut cas_observations = Vec::new();
     let mut metrics = HashMetricsDelta::default();
-    let summary = chunk_file_streaming(&job.staged, |chunk, payload| {
+    let summary = chunk_reader(&mut input, |chunk, payload| {
         if inherited_hashes.contains(&chunk.hash) {
             metrics.chunks_reused = metrics.chunks_reused.saturating_add(1);
             return Ok(());
@@ -365,27 +337,26 @@ fn hash_one_file(
             remote_entries.push(remote_entry.clone());
             return Ok(());
         }
-        let stored = cas.put_prehashed(&chunk.hash, payload)?;
-        cas_observations.push(LocalCasEntry {
-            object_kind: ContentObjectKind::Chunk,
-            content_hash: chunk.hash.clone(),
-            local_path: stored.path.to_string_lossy().into_owned(),
-            size: stored.bytes,
-            created_at: observed_at,
-            verified_at: Some(observed_at),
-            last_accessed_at: observed_at,
-        });
-        if stored.reused {
-            metrics.local_cas_hits = metrics.local_cas_hits.saturating_add(1);
-            metrics.bytes_reused_local = metrics.bytes_reused_local.saturating_add(stored.bytes);
-        } else {
-            metrics.chunks_created = metrics.chunks_created.saturating_add(1);
-        }
-        new_chunks.push((chunk.hash.clone(), stored.path));
+        sink(chunk, payload)?;
+        metrics.chunks_created += 1;
         Ok(())
     })?;
 
     let metadata = std::fs::metadata(&job.source)?;
+    #[cfg(unix)]
+    let same_inode = before.ino() == metadata.ino() && before.dev() == metadata.dev();
+    #[cfg(not(unix))]
+    let same_inode = true;
+    if before.len() != summary.size
+        || before.len() != metadata.len()
+        || before.modified().ok() != metadata.modified().ok()
+        || !same_inode
+    {
+        return Err(StateError::Invalid(format!(
+            "file changed during backup: {}. Close the application and retry",
+            job.source.display()
+        )));
+    }
     let current_mtime_ns = metadata_mtime_ns(&metadata);
     let mut current_record = job.record.clone();
     current_record.size = Some(summary.size.min(i64::MAX as u64) as i64);
@@ -428,147 +399,210 @@ fn hash_one_file(
     };
     metrics.bytes_hashed = summary.size;
     let file_state = file_state_from_manifest(&job.app_id, &manifest_file, &current_record);
-    let small_file_chunk_hashes = if noland_cas::is_small_file(summary.size) {
-        manifest_file
-            .chunks
-            .iter()
-            .map(|chunk| chunk.hash.clone())
-            .collect()
-    } else {
-        Vec::new()
-    };
     Ok(HashResult {
-        source: job.source,
         manifest_file,
         file_state,
-        new_chunks,
         remote_entries,
-        cas_observations,
-        small_file_chunk_hashes,
         metrics,
     })
 }
 
-fn hash_files_parallel(
+enum StreamEvent {
+    Chunk(ChunkRef, Vec<u8>, bool),
+    File(HashResult),
+    Failed(StateError),
+}
+
+// Two queued chunks plus one small and one regular pack bound payload staging,
+// including a single multi-gigabyte file. Manifest metadata grows with file count.
+async fn stream_backup_files(
     jobs: Vec<HashJob>,
-    worker_count: usize,
-    cas: LocalCas,
+    agent: &StateAgent,
+    operation_id: Uuid,
+    provider: &dyn SharedStorageProvider,
+    master: &MasterKey,
+    bundle_id: Uuid,
+    commit_id: Uuid,
     inherited_hashes: std::collections::HashSet<String>,
     remote_chunks: RemoteChunkIndex,
-    observed_at: chrono::DateTime<Utc>,
     cancelled: CancellationCheck,
-) -> Result<Vec<HashResult>> {
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex,
-    };
-
-    let worker_count = worker_count.max(1);
-    let (job_tx, job_rx) = mpsc::sync_channel::<HashJob>(worker_count * 2);
-    let (result_tx, result_rx) = mpsc::sync_channel::<Result<HashResult>>(worker_count * 2);
-    let job_rx = Arc::new(Mutex::new(job_rx));
-    let inherited_hashes = Arc::new(inherited_hashes);
-    let remote_chunks = Arc::new(remote_chunks);
-    let stopped = Arc::new(AtomicBool::new(false));
-    let feeder_cancelled = Arc::clone(&cancelled);
-    let feeder_stopped = Arc::clone(&stopped);
-    let feeder = std::thread::spawn(move || {
+) -> Result<(Vec<HashResult>, Vec<PackIndexEntry>, u64, u64, u64)> {
+    let total_files = jobs.len() as u64;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    let worker_cancelled = Arc::clone(&cancelled);
+    let worker = tokio::task::spawn_blocking(move || {
         for job in jobs {
-            if feeder_cancelled()
-                || feeder_stopped.load(Ordering::Acquire)
-                || job_tx.send(job).is_err()
-            {
+            if worker_cancelled() {
+                break;
+            }
+            let small = noland_cas::is_small_file(job.record.size.unwrap_or(0).max(0) as u64);
+            let mut sink = |chunk: &ChunkRef, payload: &[u8]| {
+                if worker_cancelled() {
+                    return Err(cancellation_error());
+                }
+                tx.blocking_send(StreamEvent::Chunk(chunk.clone(), payload.to_vec(), small))
+                    .map_err(|_| cancellation_error())
+            };
+            let result = hash_one_file_with_sink(job, &inherited_hashes, &remote_chunks, &mut sink);
+            let event = match result {
+                Ok(file) => StreamEvent::File(file),
+                Err(error) => StreamEvent::Failed(error),
+            };
+            let failed = matches!(event, StreamEvent::Failed(_));
+            if tx.blocking_send(event).is_err() || failed {
                 break;
             }
         }
     });
-
-    // The coordinator drains results while the feeder submits jobs, keeping both channels bounded.
-    let mut results = Vec::new();
-    let mut first_error = None;
-    std::thread::scope(|scope| {
-        for _ in 0..worker_count {
-            let job_rx = Arc::clone(&job_rx);
-            let result_tx = result_tx.clone();
-            let inherited_hashes = Arc::clone(&inherited_hashes);
-            let remote_chunks = Arc::clone(&remote_chunks);
-            let cancelled = Arc::clone(&cancelled);
-            let stopped = Arc::clone(&stopped);
-            let cas = cas.clone();
-            scope.spawn(move || loop {
-                let job = match job_rx.lock().expect("hash job receiver poisoned").recv() {
-                    Ok(job) => job,
-                    Err(_) => break,
-                };
-                if stopped.load(Ordering::Acquire) {
-                    break;
-                }
-                let result = if cancelled() {
-                    Err(cancellation_error())
-                } else {
-                    hash_one_file(job, &cas, &inherited_hashes, &remote_chunks, observed_at)
-                };
-                let failed = result.is_err();
-                if failed {
-                    stopped.store(true, Ordering::Release);
-                }
-                if result_tx.send(result).is_err() {
-                    break;
-                }
-                if failed || cancelled() {
-                    break;
-                }
-            });
+    let pack_dir = agent.config.paths.packs.join(bundle_id.to_string());
+    let _cleanup = PackCleanup::new(pack_dir.clone());
+    agent.db.delete_sync_journal_entries_for_kind_direction(
+        operation_id,
+        ContentObjectKind::Pack,
+        SyncDirection::Upload,
+    )?;
+    let mut small = PackBuilder::with_limits(16 * 1024 * 1024, 32 * 1024 * 1024);
+    let mut regular = PackBuilder::with_limits(64 * 1024 * 1024, 80 * 1024 * 1024);
+    let mut seen = std::collections::HashSet::new();
+    let mut files = Vec::new();
+    let mut entries = Vec::new();
+    let mut bytes = 0;
+    let mut timings = (0_u64, 0_u64);
+    let mut last_file_progress = Instant::now();
+    while let Some(event) = rx.recv().await {
+        if cancelled() {
+            return Err(cancellation_error());
         }
-        drop(result_tx);
-        for result in result_rx {
-            match result {
-                Ok(result) => results.push(result),
-                Err(error) if first_error.is_none() => first_error = Some(error),
-                Err(_) => {}
+        match event {
+            StreamEvent::Chunk(chunk, payload, is_small) => {
+                if !seen.insert(chunk.hash.clone()) {
+                    continue;
+                }
+                let builder = if is_small { &mut small } else { &mut regular };
+                builder.add_chunk(chunk.hash, payload);
+                if builder.needs_flush() {
+                    upload_stream_pack(
+                        agent,
+                        operation_id,
+                        provider,
+                        master,
+                        commit_id,
+                        builder,
+                        &pack_dir,
+                        &mut entries,
+                        &mut bytes,
+                        &mut timings,
+                    )
+                    .await?;
+                    *builder = if is_small {
+                        PackBuilder::with_limits(16 * 1024 * 1024, 32 * 1024 * 1024)
+                    } else {
+                        PackBuilder::with_limits(64 * 1024 * 1024, 80 * 1024 * 1024)
+                    };
+                }
             }
+            StreamEvent::File(file) => {
+                if files.is_empty()
+                    || files.len() as u64 % PROGRESS_FLUSH_FILES == 0
+                    || last_file_progress.elapsed() >= PROGRESS_FLUSH_INTERVAL
+                {
+                    if let Some(mut progress) = agent.db.get_operation_progress(operation_id)? {
+                        progress.completed_units = files.len() as u64 + 1;
+                        progress.total_units = Some(total_files);
+                        progress.unit = Some("files".into());
+                        progress.phase = "hashing".into();
+                        progress.message =
+                            Some("Reading files and uploading bounded encrypted packs".into());
+                        progress.detail_json["files_hashed"] = serde_json::json!(files.len() + 1);
+                        progress.updated_at = Utc::now();
+                        agent
+                            .db
+                            .set_operation_progress(operation_id, Some(&progress))?;
+                    }
+                    last_file_progress = Instant::now();
+                }
+                files.push(file);
+            }
+            StreamEvent::Failed(error) => return Err(error),
         }
-        Ok::<(), StateError>(())
-    })?;
-    feeder.join().expect("hash job feeder panicked");
-    if let Some(error) = first_error {
-        return Err(error);
     }
-    results.sort_by(|left, right| left.source.cmp(&right.source));
-    Ok(results)
+    worker
+        .await
+        .map_err(|error| StateError::msg(format!("backup reader failed: {error}")))?;
+    if cancelled() {
+        return Err(cancellation_error());
+    }
+    for builder in [&mut small, &mut regular] {
+        upload_stream_pack(
+            agent,
+            operation_id,
+            provider,
+            master,
+            commit_id,
+            builder,
+            &pack_dir,
+            &mut entries,
+            &mut bytes,
+            &mut timings,
+        )
+        .await?;
+    }
+    Ok((files, entries, bytes, timings.0, timings.1))
 }
 
-struct SnapshotCleanup(PathBuf);
-
-impl Drop for SnapshotCleanup {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
+async fn upload_stream_pack(
+    agent: &StateAgent,
+    operation_id: Uuid,
+    provider: &dyn SharedStorageProvider,
+    master: &MasterKey,
+    commit_id: Uuid,
+    builder: &mut PackBuilder,
+    pack_dir: &Path,
+    entries: &mut Vec<PackIndexEntry>,
+    bytes: &mut u64,
+    timings: &mut (u64, u64),
+) -> Result<()> {
+    let packing_started = Instant::now();
+    let Some(pack) = builder.flush(pack_dir, master)? else {
+        return Ok(());
+    };
+    timings.0 += elapsed_ms(packing_started);
+    let upload_started = Instant::now();
+    let mut progress = agent
+        .db
+        .get_operation_progress(operation_id)?
+        .unwrap_or_else(|| OperationProgress::new("uploading", 0));
+    progress.phase = "uploading".into();
+    progress.message = Some("Uploading encrypted pack; local staging is bounded".into());
+    agent
+        .db
+        .set_operation_progress(operation_id, Some(&progress))?;
+    noland_storage::upload_packs_for_operation(
+        provider,
+        &[(pack.pack_id.clone(), pack.path.clone())],
+        commit_id,
+        Some(&agent.db),
+        Some(operation_id),
+    )
+    .await?;
+    timings.1 += elapsed_ms(upload_started);
+    *bytes += pack.bytes;
+    entries.extend(pack.entries);
+    std::fs::remove_file(pack.path)?;
+    Ok(())
 }
 
 struct PackCleanup {
     path: PathBuf,
-    cloud_committed: bool,
 }
-
 impl PackCleanup {
     fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            cloud_committed: false,
-        }
-    }
-
-    fn mark_cloud_committed(&mut self) {
-        self.cloud_committed = true;
+        Self { path }
     }
 }
-
 impl Drop for PackCleanup {
     fn drop(&mut self) {
-        if self.cloud_committed {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
+        let _ = std::fs::remove_dir_all(&self.path);
     }
 }
 
@@ -651,7 +685,12 @@ pub async fn run_backup(
         .unwrap_or(0);
     metrics.num_dirty_roots = agent.db.list_dirty_roots(Some(app_id))?.len() as u64;
 
-    let parent = load_parent(provider, master, agent, app_id).await;
+    let is_folder = app_id.as_str().starts_with("folder:");
+    let parent = if is_folder {
+        None
+    } else {
+        load_parent(provider, master, agent, app_id).await
+    };
     if parent.is_some()
         && dirty_state.is_none()
         && pending_mutations.is_empty()
@@ -674,7 +713,7 @@ pub async fn run_backup(
             .list_dirty_roots(Some(app_id))?
             .iter()
             .any(|root| root.requires_reconciliation);
-    if requires_reconciliation || mode == BackupMode::CompleteApplication {
+    if !is_folder && (requires_reconciliation || mode == BackupMode::CompleteApplication) {
         persist_operation(agent, &mut op, BackupState::Reconciling, &metrics)?;
         let started = Instant::now();
         let reconciled = if mode == BackupMode::CompleteApplication {
@@ -709,7 +748,14 @@ pub async fn run_backup(
         || performance == BackupPerformanceMode::Full
         || requires_reconciliation;
 
-    if full_scope {
+    let mut folder_metadata = Vec::new();
+    if is_folder {
+        let (files, entries) = crate::folders::scan(agent, app_id)?;
+        folder_metadata = entries;
+        for (record, association) in files {
+            candidates.insert(record.canonical_path.clone(), (record, association));
+        }
+    } else if full_scope {
         classifier.reclassify_app(app_id)?;
         let rows = if mode == BackupMode::CompleteApplication {
             agent.db.associations_for_app(app_id)?
@@ -800,6 +846,12 @@ pub async fn run_backup(
         ),
     };
 
+    if is_folder {
+        manifest.environment["folder_relative_path"] = serde_json::json!(folder_metadata
+            .first()
+            .map(|entry| entry.relative_path.clone()));
+    }
+    manifest.files.extend(folder_metadata);
     let mut tombstones = BTreeMap::<(String, String), String>::new();
     if let Some(scope) = strict_steam_scope.as_ref() {
         let inherited_files = std::mem::take(&mut manifest.files);
@@ -852,12 +904,19 @@ pub async fn run_backup(
     let mut include_paths = Vec::new();
     let mut changed_files = BTreeMap::<String, (PathRecord, PathAssociation, LogicalPath)>::new();
     for (canonical, (record, association)) in candidates {
-        let logical = roots.classify(Path::new(&canonical)).unwrap_or_else(|| {
+        let logical = if is_folder {
             LogicalPath::new(
                 LogicalRoot::Home,
-                canonical.trim_start_matches('/').to_string(),
+                record.relative_path.clone().unwrap_or_default(),
             )
-        });
+        } else {
+            roots.classify(Path::new(&canonical)).unwrap_or_else(|| {
+                LogicalPath::new(
+                    LogicalRoot::Home,
+                    canonical.trim_start_matches('/').to_string(),
+                )
+            })
+        };
         let inherited = manifest_file(&manifest, &logical).cloned();
         remove_manifest_file(&mut manifest, &logical);
         if !Path::new(&canonical).is_file() {
@@ -869,7 +928,11 @@ pub async fn run_backup(
             }
             continue;
         }
-        let decision = classifier.decide(&record, &association, mode)?;
+        let decision = if is_folder {
+            BackupDecision::Include
+        } else {
+            classifier.decide(&record, &association, mode)?
+        };
         let complete_install_content = mode == BackupMode::CompleteApplication
             && install_roots
                 .iter()
@@ -965,9 +1028,9 @@ pub async fn run_backup(
 
     persist_operation(agent, &mut op, BackupState::Snapshotting, &metrics)?;
     let snapshot_started = Instant::now();
-    let view = create_view(&agent.config.paths.snapshots, &include_paths, true)?;
-    let _snapshot_cleanup = SnapshotCleanup(view.root.clone());
-    manifest.consistency = view.consistency;
+    // Read stable files directly. Copying the entire selection first can exhaust
+    // the VM before the first upload. Live reads are explicitly best effort.
+    manifest.consistency = ConsistencyKind::BestEffort;
     metrics.snapshot_duration_ms = elapsed_ms(snapshot_started);
 
     persist_operation(agent, &mut op, BackupState::Hashing, &metrics)?;
@@ -975,7 +1038,6 @@ pub async fn run_backup(
     progress.completed_units = 0;
     agent.db.set_operation_progress(op_id, Some(&progress))?;
     let hashing_started = Instant::now();
-    let cas = LocalCas::new(agent.config.paths.cache.join("cas/chunks"))?;
     let cancelled: CancellationCheck = {
         let operations = agent.operations.clone();
         Arc::new(move || operations.cancel_requested(op_id))
@@ -985,44 +1047,39 @@ pub async fn run_backup(
         .storage_identity()
         .map(|identity| identity.cache_key());
     let remote_chunks = load_remote_chunk_index(agent, storage_id.as_deref(), snapshot_time)?;
-    let cas_observed_at = snapshot_time;
-    let mut cas_observations = Vec::<LocalCasEntry>::new();
     let mut progress_reporter = ProgressReporter::new(op_id);
     let inherited_hashes = pack_index
         .iter()
         .map(|entry| entry.chunk_hash.clone())
         .collect::<std::collections::HashSet<_>>();
-    let jobs = view
-        .mappings
+    let jobs = changed_files
         .iter()
-        .filter_map(|mapping| {
-            changed_files
-                .get(&mapping.source.to_string_lossy().into_owned())
-                .map(|(record, association, logical)| HashJob {
-                    app_id: app_id.clone(),
-                    source: mapping.source.clone(),
-                    staged: mapping.staged.clone(),
-                    record: record.clone(),
-                    association: association.clone(),
-                    logical: logical.clone(),
-                    shared_app_ids: shared_app_ids_by_path
-                        .get(&record.path_id)
-                        .cloned()
-                        .unwrap_or_default(),
-                })
+        .map(|(source, (record, association, logical))| HashJob {
+            app_id: app_id.clone(),
+            source: PathBuf::from(source),
+            record: record.clone(),
+            association: association.clone(),
+            logical: logical.clone(),
+            shared_app_ids: shared_app_ids_by_path
+                .get(&record.path_id)
+                .cloned()
+                .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
-    let results = hash_files_parallel(
+    let storage_before = provider.operation_metrics();
+    let (results, new_pack_entries, incremental, packing_ms, uploading_ms) = stream_backup_files(
         jobs,
-        hashing_worker_count(performance),
-        cas,
+        agent,
+        op_id,
+        provider,
+        master,
+        manifest.bundle_id,
+        manifest.commit_id,
         inherited_hashes,
         remote_chunks,
-        cas_observed_at,
         Arc::clone(&cancelled),
-    )?;
-    let mut new_chunk_paths = BTreeMap::<String, PathBuf>::new();
-    let mut small_file_chunk_hashes = BTreeSet::<String>::new();
+    )
+    .await?;
     let mut trusted_states = Vec::<FileStateRecord>::new();
     for result in results {
         metrics.num_files_rehashed = metrics.num_files_rehashed.saturating_add(1);
@@ -1051,65 +1108,21 @@ pub async fn run_backup(
             .bytes_reused_local
             .saturating_add(result.metrics.bytes_reused_local);
         pack_index.extend(result.remote_entries);
-        new_chunk_paths.extend(result.new_chunks);
-        cas_observations.extend(result.cas_observations);
-        small_file_chunk_hashes.extend(result.small_file_chunk_hashes);
         trusted_states.push(result.file_state);
         manifest.files.push(result.manifest_file);
         progress_reporter.record_file(result.metrics.bytes_hashed);
         progress_reporter.maybe_flush(agent, &mut progress, &metrics)?;
     }
     progress_reporter.flush(agent, &mut progress, &metrics)?;
-    metrics.hashing_duration_ms = elapsed_ms(hashing_started);
+    metrics.hashing_duration_ms =
+        elapsed_ms(hashing_started).saturating_sub(packing_ms + uploading_ms);
 
     persist_operation(agent, &mut op, BackupState::Packing, &metrics)?;
     progress.phase = "packing".into();
     agent.db.set_operation_progress(op_id, Some(&progress))?;
     let packing_started = Instant::now();
-    let pack_dir = agent
-        .config
-        .paths
-        .packs
-        .join(manifest.bundle_id.to_string());
-    let mut pack_cleanup = PackCleanup::new(pack_dir.clone());
-    let mut small_chunks = Vec::new();
-    let mut regular_chunks = Vec::new();
-    for chunk in new_chunk_paths {
-        if small_file_chunk_hashes.contains(&chunk.0) {
-            small_chunks.push(chunk);
-        } else {
-            regular_chunks.push(chunk);
-        }
-    }
-    // Small state files are deliberately grouped into compact packs so launch-critical
-    // restore does not need to fetch a mostly unrelated 512 MiB pack.
-    let mut packs = build_packs_parallel(
-        &pack_dir,
-        master,
-        small_chunks,
-        16 * 1024 * 1024,
-        32 * 1024 * 1024,
-        pack_worker_count(performance),
-        Arc::clone(&cancelled),
-    )?;
-    packs.extend(build_packs_parallel(
-        &pack_dir,
-        master,
-        regular_chunks,
-        noland_state_core::constants::PACK_TARGET,
-        noland_state_core::constants::PACK_MAX,
-        pack_worker_count(performance),
-        Arc::clone(&cancelled),
-    )?);
-    let mut incremental = 0u64;
-    let mut pack_files = Vec::new();
-    let mut new_pack_entries = Vec::<PackIndexEntry>::new();
-    for pack in &packs {
-        incremental = incremental.saturating_add(pack.bytes);
-        metrics.bytes_packed = metrics.bytes_packed.saturating_add(pack.bytes);
-        pack_files.push((pack.pack_id.clone(), pack.path.clone()));
-        new_pack_entries.extend(pack.entries.iter().cloned());
-    }
+    let pack_files = Vec::new(); // Packs were uploaded and released by the bounded pipeline.
+    metrics.bytes_packed = incremental;
     pack_index.extend(new_pack_entries.iter().cloned());
     pack_index.sort_by(|left, right| left.chunk_hash.cmp(&right.chunk_hash));
     pack_index.dedup_by(|left, right| left.chunk_hash == right.chunk_hash);
@@ -1126,38 +1139,18 @@ pub async fn run_backup(
         )));
     }
     noland_restore::embed_restore_plan(&mut manifest, restore_mode_for_backup(mode));
-    metrics.packing_duration_ms = elapsed_ms(packing_started);
+    metrics.packing_duration_ms = packing_ms + elapsed_ms(packing_started);
 
-    let transfer_bytes = pack_files
-        .iter()
-        .filter_map(|(_, path)| std::fs::metadata(path).ok().map(|metadata| metadata.len()))
-        .sum::<u64>();
+    let transfer_bytes = incremental;
     persist_operation(agent, &mut op, BackupState::Uploading, &metrics)?;
-    progress.phase = "uploading".into();
-    progress.completed_units = 0;
+    progress.phase = "committing".into();
+    progress.completed_units = transfer_bytes;
     progress.total_units = Some(transfer_bytes);
     progress.unit = Some("bytes".into());
-    progress.message = Some(format!(
-        "Uploading {transfer_bytes} bytes in encrypted packs"
-    ));
-    progress.detail_json = serde_json::json!({
-        "bytes_to_upload": transfer_bytes,
-        "total_packs": pack_files.len(),
-        "completed_pack_bytes": 0,
-        "bytes_transferred": 0,
-        "total_transfer_bytes": transfer_bytes,
-    });
+    progress.message = Some("Packs uploaded; committing the saved bundle".into());
+    progress.detail_json = serde_json::json!({"completed_pack_bytes": transfer_bytes, "total_transfer_bytes": transfer_bytes});
     progress.updated_at = Utc::now();
-    // Every backup attempt creates a fresh bundle and random pack IDs. Old upload
-    // journal rows cannot resume that regenerated pack set, so scope progress to
-    // this bundle without deleting any immutable objects already in cloud storage.
-    agent.db.delete_sync_journal_entries_for_kind_direction(
-        op_id,
-        ContentObjectKind::Pack,
-        SyncDirection::Upload,
-    )?;
     agent.db.set_operation_progress(op_id, Some(&progress))?;
-    let storage_before = provider.operation_metrics();
     let upload_started = Instant::now();
     agent.db.record_commit(
         manifest.commit_id,
@@ -1178,8 +1171,7 @@ pub async fn run_backup(
         Some(op_id),
     )
     .await?;
-    pack_cleanup.mark_cloud_committed();
-    metrics.upload_duration_ms = elapsed_ms(upload_started);
+    metrics.upload_duration_ms = uploading_ms + elapsed_ms(upload_started);
     metrics.num_manifest_writes = 1;
 
     persist_operation(agent, &mut op, BackupState::Committing, &metrics)?;
@@ -1202,7 +1194,6 @@ pub async fn run_backup(
         .collect::<Vec<_>>();
     agent.db.remember_chunks_bulk(&chunk_rows)?;
     remember_remote_pack_index(agent, provider.storage_identity(), &pack_index)?;
-    agent.db.upsert_local_cas_entries(&cas_observations)?;
     agent.db.upsert_file_states(&trusted_states)?;
     finish_backup_evidence(agent, app_id, &pending_mutations)?;
 
@@ -1219,7 +1210,6 @@ pub async fn run_backup(
         );
     }
     metrics.checkpoint_duration_ms = elapsed_ms(checkpoint_started);
-    discard(&view)?;
 
     metrics.total_duration_ms =
         elapsed_ms(total_started).saturating_add(metrics.discovery_duration_ms);
@@ -1764,24 +1754,56 @@ mod tests {
     }
 
     #[test]
-    fn local_packs_are_removed_only_after_cloud_commit() {
+    fn generated_packs_are_removed_on_success_and_failure() {
         let retained = test_root("packs-retained-on-failure");
         std::fs::create_dir_all(&retained).unwrap();
         std::fs::write(retained.join("pack"), b"data").unwrap();
         {
             let _cleanup = PackCleanup::new(retained.clone());
         }
-        assert!(retained.join("pack").is_file());
-        std::fs::remove_dir_all(&retained).unwrap();
+        assert!(!retained.exists());
 
         let committed = test_root("packs-removed-after-commit");
         std::fs::create_dir_all(&committed).unwrap();
         std::fs::write(committed.join("pack"), b"data").unwrap();
         {
-            let mut cleanup = PackCleanup::new(committed.clone());
-            cleanup.mark_cloud_committed();
+            let _cleanup = PackCleanup::new(committed.clone());
         }
         assert!(!committed.exists());
+    }
+
+    #[test]
+    fn changing_a_file_during_its_read_invalidates_the_backup() {
+        let root = test_root("changing-source");
+        let agent = StateAgent::boot(AgentConfig::isolated(root.clone())).unwrap();
+        let folder = agent.config.home.join("project");
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("data.bin");
+        std::fs::write(&path, vec![7_u8; 1024 * 1024]).unwrap();
+        let id = crate::folders::register(&agent, "project").unwrap();
+        let (mut files, _) = crate::folders::scan(&agent, &id).unwrap();
+        let (record, association) = files.pop().unwrap();
+        let job = HashJob {
+            app_id: id,
+            source: path.clone(),
+            record,
+            association,
+            logical: LogicalPath::new(LogicalRoot::Home, "project/data.bin"),
+            shared_app_ids: vec![],
+        };
+        let mut mutate = |_: &ChunkRef, _: &[u8]| {
+            std::fs::write(&path, b"changed")?;
+            Ok(())
+        };
+        let error = hash_one_file_with_sink(
+            job,
+            &std::collections::HashSet::new(),
+            &RemoteChunkIndex::empty(),
+            &mut mutate,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("file changed during backup"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn tracked_save(

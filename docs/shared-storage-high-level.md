@@ -2,7 +2,10 @@
 
 This document explains, at a very high level, how Noland shared storage works and which tools/components are involved.
 
-Shared storage lets a Vast GPU instance save and restore selected app/game state through a cloud-backed repository. The local Noland app controls the flow, but the heavy work happens on the rented Vast instance through the `state-agent`.
+Shared storage lets a Vast GPU instance save and restore selected app/game state and whole folders through a cloud-backed repository. The local Noland app controls the flow, but the heavy work happens on the rented Vast instance through the `state-agent`.
+
+The current backup worker uploads bounded packs while reading files. See [Folder saves and bounded backup staging](shared-storage-folder-backups.md) for folder selection, restore behavior, and the changes that prevent full-selection disk staging.
+
 
 ## Big Picture
 

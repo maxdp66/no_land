@@ -57,7 +57,7 @@ export function SharedStorageSyncModal({
     setPendingAction({
       key: "sync-modal.load",
       label: "Loading shared storage tree",
-      detail: "Reading the application catalog from Shared Storage.",
+      detail: "Reading saved applications and folders from Shared Storage.",
       mode: "indeterminate",
       progress: null,
       startedAt: Date.now()

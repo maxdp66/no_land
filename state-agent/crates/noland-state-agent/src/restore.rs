@@ -213,6 +213,7 @@ pub async fn run_restore_with_session(
                     icon_path: manifest_app.icon_path.clone(),
                 })?;
 
+                let restored_folder = crate::folders::restore_root(agent, &plan.manifest)?;
                 let index = read_pack_index_for_operation(
                     &storage,
                     master,
@@ -406,7 +407,26 @@ pub async fn run_restore_with_session(
                     serde_json::json!(complete_report.reused_entries);
                 progress.detail_json["milestones"] =
                     serde_json::json!(["READY_TO_LAUNCH", "COMPLETE"]);
-                restore.commit()?;
+                persist_restore_progress(
+                    agent,
+                    operation_id,
+                    &mut progress,
+                    "verifying",
+                    total_files,
+                    "Verifying restored files, directories, and symlinks before completion",
+                )?;
+                let verification_started = Instant::now();
+                let verification = restore.commit_verified()?;
+                metrics.validation_duration_ms = metrics
+                    .validation_duration_ms
+                    .saturating_add(elapsed_ms(verification_started));
+                progress.detail_json["destination_verification"] =
+                    serde_json::to_value(verification)?;
+                if let Some(folder) = restored_folder {
+                    agent
+                        .db
+                        .add_known_root(app_id, "folder", &folder.to_string_lossy())?;
+                }
                 if mode == RestoreMode::CompleteApplication {
                     ensure_steam_appmanifest_after_commit(agent, &plan.manifest)?;
                 }

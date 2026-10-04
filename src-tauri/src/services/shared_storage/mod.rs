@@ -6,3 +6,5 @@ pub mod object_storage;
 pub mod provider_profiles;
 pub mod rclone_adapter;
 pub mod shared_storage_manager;
+
+pub(crate) mod backup_selection;
