@@ -1625,6 +1625,8 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
         ensure_not_cancelled(&context)?;
     }
 
+    super::vm_upgrade_tool::install(&remote, &target_user).await?;
+
     initialize_post_wireguard_flow(
         &app,
         &context,
@@ -2627,6 +2629,8 @@ async fn run_existing_instance_orchestration(
         .await;
         ensure_not_cancelled(&context)?;
     }
+
+    super::vm_upgrade_tool::install(&remote, &target_user).await?;
 
     initialize_post_wireguard_flow(
         &app,

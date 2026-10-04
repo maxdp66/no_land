@@ -254,3 +254,45 @@ The desktop app owns the local GotaTun tunnel lifecycle and can reconnect it fro
 - Windows release installers must pass Azure Artifact Signing and Authenticode validation.
 - Linux packages are validated locally; publication to a Linux package repository is not part of
   these workflows.
+
+## Upgrading a provisioned Ubuntu VM
+
+At the end of the remote setup phase, new provisioning and existing-instance
+reprovisioning install `~/Desktop/tools/upgrade-noland-vm.sh`, a terminal launcher
+(`Upgrade Ubuntu.desktop`), and usage instructions. Installing the tool does not
+start an upgrade. KDE may require trusting the desktop launcher once.
+
+Back up VM/game data, then launch the tool or run it from that folder. It supports
+Ubuntu **22.04 → 24.04 LTS** only, using `do-release-upgrade` with Ubuntu's
+noninteractive frontend. It updates the source release first, resumes after any
+required reboot, restores KDE's X11 desktop and compatible Noble PipeWire
+packages, switches audio from PulseAudio to PipeWire, and reboots for validation.
+No Land's display-manager masks and Sunshine configuration/pairing are retained.
+The original Sunshine package is preserved locally in case Ubuntu removes it.
+No `autoremove` is run. Release-specific third-party repositories disabled by
+Ubuntu remain disabled; review their Noble support before re-enabling them.
+
+The root-owned executable is `/usr/local/lib/noland/upgrade-vm.sh`. Provisioning
+adds a sudoers rule for the streaming account allowing only that helper with no
+arguments or `--repair`, without a password; it grants no general shell access.
+The desktop copy is a wrapper and cannot change the privileged service code.
+A systemd job continues independently when streaming or the terminal disconnects.
+
+For an already upgraded Noble VM, run `./upgrade-noland-vm.sh --repair`. Logs,
+configuration backups, and the original package inventory are stored root-only
+under `/var/lib/noland/distro-upgrade/`. Follow progress over SSH with:
+
+```bash
+sudo journalctl -fu noland-distro-upgrade.service
+```
+
+The final checks cover APT consistency, NVIDIA visibility, Xorg/display output,
+Plasma, Sunshine's listener, the user audio services, and the `sunshine_audio`
+sink. Reconnect with Play to check actual video and audio. Failed repair
+transactions stop rather than removing packages; inspect the log before retrying.
+
+Offline regression checks (no VM changes):
+
+```bash
+python3 scripts/tests/test_vm_upgrade_tool.py
+```
