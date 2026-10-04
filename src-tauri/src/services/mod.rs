@@ -36,5 +36,6 @@ pub mod state_store;
 pub mod sunshine;
 pub mod vast_api;
 pub mod vm_agents;
+pub mod vm_upgrade_tool;
 pub mod wireguard;
 mod wireguard_mtu;
