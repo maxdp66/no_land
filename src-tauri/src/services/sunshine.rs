@@ -495,7 +495,10 @@ if [ -z "$url" ]; then
 fi
 
 curl -fsSL "$url" -o "$pkg_path"
-sudo apt-get -o DPkg::Lock::Timeout=600 update
+# The up-front provisioning package pass already refreshed the index.
+if [ -z "$(find /var/lib/noland/apt-index-refreshed -mmin -360 2>/dev/null)" ]; then
+  sudo apt-get -o DPkg::Lock::Timeout=600 update
+fi
 sudo apt-get -o DPkg::Lock::Timeout=600 install -y --allow-change-held-packages "$pkg_path"
 sunshine --version 2>/dev/null || /usr/bin/sunshine --version 2>/dev/null || true"#;
 

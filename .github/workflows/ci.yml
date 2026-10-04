@@ -145,10 +145,19 @@ jobs:
     with:
       dependency-review: true
 
+  vm-agents:
+    name: vm-agents (prebuilt binaries)
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Build the agents that run on the remote VM
+        run: bash scripts/ci/build-vm-agents.sh
+
   required:
     name: PR CI required
     if: always()
-    needs: [typecheck-build, rust-format, rust-check, unit-tests, security]
+    needs: [typecheck-build, rust-format, rust-check, unit-tests, vm-agents, security]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every PR lane

@@ -19,6 +19,8 @@ mic-sidecar/target/
 vm-cloud-mic-agent/target/
 state-agent/target/
 network-agent/target/
+# CI-built VM agent binaries (scripts/ci/build-vm-agents.sh)
+src-tauri/vm-agents/*/
 
 # Local tools and temporary/generated workspace files
 .tmp/

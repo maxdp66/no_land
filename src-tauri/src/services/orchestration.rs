@@ -947,6 +947,8 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
         "Ensuring state-agent is installed and enabled on instance {}",
         instance.id
     );
+    super::package_manager::install_provisioning_packages(&remote).await;
+    super::browser::ensure_brave(&remote, &target_user).await;
     ensure_state_agent(&remote, &target_user).await?;
     provision_lifecycle_agent(&context, &remote, instance.id, &target_user).await?;
     if let Err(error) = NetworkAgentProvisioner::ensure(&remote, instance.id).await {
@@ -1955,6 +1957,8 @@ async fn run_existing_instance_orchestration(
         "Ensuring state-agent is installed and enabled on existing instance {}",
         instance.id
     );
+    super::package_manager::install_provisioning_packages(&remote).await;
+    super::browser::ensure_brave(&remote, &target_user).await;
     ensure_state_agent(&remote, &target_user).await?;
     provision_lifecycle_agent(&context, &remote, instance.id, &target_user).await?;
     if let Err(error) = NetworkAgentProvisioner::ensure(&remote, instance.id).await {

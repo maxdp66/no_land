@@ -22,8 +22,27 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "12.0"
 
 jobs:
+  vm-agents:
+    name: build-vm-agents
+    runs-on: ubuntu-24.04
+    # Oldest supported VM release, so the binaries' glibc requirement is met
+    # on every Ubuntu/Debian image the provisioning flow accepts.
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Build the agents that run on the remote VM
+        run: bash scripts/ci/build-vm-agents.sh
+      - name: Upload VM agent binaries
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vm-agents
+          path: src-tauri/vm-agents/x86_64-unknown-linux-gnu/
+          if-no-files-found: error
+          retention-days: 7
+
   build-unix:
     name: build-${{ matrix.platform }}-${{ matrix.arch }}
+    needs: vm-agents
     environment: Secrets
     strategy:
       fail-fast: false
@@ -114,6 +133,12 @@ jobs:
           cert_id=$(printf '%s\n' "$identities" | grep -E 'Developer ID Application' | head -n 1 | awk -F'"' '{print $2}')
           test -n "$cert_id" || { echo 'Developer ID Application identity not found.' >&2; exit 1; }
           echo "APPLE_SIGNING_IDENTITY=$cert_id" >> "$GITHUB_ENV"
+
+      - name: Bundle prebuilt VM agent binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: vm-agents
+          path: src-tauri/vm-agents/x86_64-unknown-linux-gnu
 
       - name: Install dependencies and stage managed tools
         run: |
@@ -207,6 +232,7 @@ jobs:
 
   build-windows:
     name: build-windows-${{ matrix.arch }}
+    needs: vm-agents
     environment: Secrets
     permissions:
       contents: read
@@ -235,6 +261,12 @@ jobs:
           workspaces: |
             src-tauri
             mic-sidecar
+
+      - name: Bundle prebuilt VM agent binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: vm-agents
+          path: src-tauri/vm-agents/x86_64-unknown-linux-gnu
 
       - name: Install dependencies and stage managed tools
         shell: pwsh

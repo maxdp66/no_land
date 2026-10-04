@@ -744,6 +744,11 @@ fn pack_source_bundle(source_dir: &Path, archive_path: &Path) -> AppResult<()> {
         &contracts_dir.join("src"),
         &contracts_root.join("src"),
     )?;
+    super::vm_agents::append_prebuilt(
+        &mut archive,
+        archive_root,
+        &[super::vm_agents::NETWORK_AGENT],
+    )?;
 
     let encoder = archive.into_inner().map_err(|error| {
         AppError::Provisioning(format!(

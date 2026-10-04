@@ -159,13 +159,13 @@ setup_bottles_launchers() {
   log "Installers prepared. In desktop session run: bash ~/run-launcher-installers.sh"
 }
 
-install_chrome() {
-  log "Installing Google Chrome"
-  local deb_path="/tmp/google-chrome-stable_current_amd64.deb"
-  wget -q "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" -O "$deb_path"
-  run_root "dpkg -i '${deb_path}'" || run_root "apt-get install -f -y"
-  rm -f "$deb_path"
-  run_user "xdg-settings set default-web-browser google-chrome.desktop || true"
+install_brave() {
+  log "Installing Brave browser"
+  local keyring="/usr/share/keyrings/brave-browser-archive-keyring.gpg"
+  run_root "curl -fsSLo '${keyring}' https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
+  run_root "echo 'deb [signed-by=${keyring} arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main' > /etc/apt/sources.list.d/brave-browser-release.list"
+  run_root "apt-get update && apt-get install -y brave-browser"
+  run_user "xdg-settings set default-web-browser brave-browser.desktop || true"
 }
 
 install_wine() {
@@ -408,7 +408,7 @@ setup_shared_wine_prefix() {
 [Desktop Entry]
 Name=Ubisoft Connect (Install Manually)
 Comment=Run installer in shared Wine prefix
-Exec=google-chrome 'https://ubisoftconnect.com'
+Exec=brave-browser 'https://ubisoftconnect.com'
 Terminal=false
 Type=Application
 Categories=Game;
@@ -419,7 +419,7 @@ EOF
 [Desktop Entry]
 Name=EA App (Install Manually)
 Comment=Run installer in shared Wine prefix
-Exec=google-chrome 'https://www.ea.com/ea-app'
+Exec=brave-browser 'https://www.ea.com/ea-app'
 Terminal=false
 Type=Application
 Categories=Game;
@@ -442,7 +442,7 @@ EOF
 }
 
 configure_desktop_favorites() {
-  log "Configuring desktop favorites for Chrome, Steam, and Bottles"
+  log "Configuring desktop favorites for Brave, Steam, and Bottles"
 
   run_user "mkdir -p '${USER_HOME}/.local/bin' '${USER_HOME}/.config/autostart'"
 
@@ -451,7 +451,7 @@ configure_desktop_favorites() {
 set -euo pipefail
 
 required=(
-  'google-chrome.desktop'
+  'brave-browser.desktop'
   'steam.desktop'
   'com.usebottles.bottles.desktop'
 )
@@ -460,7 +460,7 @@ if ! command -v gsettings >/dev/null 2>&1; then
   exit 0
 fi
 
-updated_raw="['google-chrome.desktop', 'steam.desktop', 'com.usebottles.bottles.desktop']"
+updated_raw="['brave-browser.desktop', 'steam.desktop', 'com.usebottles.bottles.desktop']"
 
 gsettings set org.gnome.shell favorite-apps "$updated_raw" || exit 0
 rm -f "$HOME/.config/autostart/noland-pin-favorites.desktop"
@@ -471,7 +471,7 @@ chmod +x '${USER_HOME}/.local/bin/noland-pin-favorites.sh'"
 [Desktop Entry]
 Type=Application
 Name=Noland Pin Favorites
-Comment=Pin Chrome, Steam, and Bottles
+Comment=Pin Brave, Steam, and Bottles
 Exec=${USER_HOME}/.local/bin/noland-pin-favorites.sh
 Terminal=false
 X-GNOME-Autostart-enabled=true
@@ -538,8 +538,8 @@ main() {
   phase "2/6 Install base system packages"
   ensure_packages
 
-  phase "3/6 Install Chrome and Wine"
-  install_chrome
+  phase "3/6 Install Brave and Wine"
+  install_brave
   install_wine
 
   phase "4/6 Optional gaming stack"
