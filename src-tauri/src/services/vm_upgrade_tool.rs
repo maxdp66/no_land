@@ -10,6 +10,7 @@ use crate::{
 };
 
 const UPGRADE: &str = include_str!("../../scripts/upgrade_noland_vm.sh");
+const DISPLAY: &str = include_str!("../../scripts/change_display_resolution.py");
 const INSTALL: &str = include_str!("../../scripts/install_vm_upgrade_tool.sh");
 
 fn install_command(sudo: &str, target_user: &str) -> String {
@@ -22,9 +23,11 @@ fn install_command(sudo: &str, target_user: &str) -> String {
         "set -e; staging=$(mktemp -d); trap 'rm -rf \"$staging\"' EXIT; \
          printf %s {upgrade} | base64 -d > \"$staging/upgrade.sh\"; \
          printf %s {install} | base64 -d > \"$staging/install.sh\"; \
-         {sudo}bash \"$staging/install.sh\" {user} \"$staging/upgrade.sh\"",
+         printf %s {display} | base64 -d > \"$staging/display.py\"; \
+         {sudo}bash \"$staging/install.sh\" {user} \"$staging/upgrade.sh\" \"$staging/display.py\"",
         upgrade = encode(UPGRADE),
         install = encode(INSTALL),
+        display = encode(DISPLAY),
         user = shell::quote(target_user),
     )
 }

@@ -108,13 +108,15 @@ install() {{
 }}
 TEST_HOME='{home}'
 getent() {{ printf 'testuser:x:1000:1000::%s:/bin/bash\\n' "$TEST_HOME"; }}
-set -- testuser '{SCRIPT}'
+set -- testuser '{SCRIPT}' '{SCRIPT.with_name('change_display_resolution.py')}'
 """
             result = subprocess.run(["bash", "-c", mocks + installer], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             tools = home / "Desktop/tools"
             self.assertTrue((tools / "Upgrade Ubuntu.desktop").exists())
             self.assertTrue((tools / "README.txt").exists())
+            self.assertTrue((tools / "Change Display Resolution.desktop").exists())
+            self.assertNotIn("sudo", (tools / "change-display-resolution.sh").read_text())
             self.assertIn('exec sudo', (tools / "upgrade-noland-vm.sh").read_text())
             self.assertEqual((root / "lib/noland/upgrade-vm.sh").read_text(), SCRIPT.read_text())
             rule = (root / "etc/sudoers.d/noland-vm-upgrade-testuser").read_text()
