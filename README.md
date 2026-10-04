@@ -179,7 +179,7 @@ The repository includes GitHub Actions workflows for direct-download desktop bui
 - pushes to `main` can update a rolling prerelease;
 - version tags can publish release artifacts.
 
-macOS release builds are designed to require Developer ID signing and notarization credentials. Windows Authenticode and Linux package signing remain separate release-hardening work.
+Release builds always require `TAURI_SIGNING_PRIVATE_KEY` for updater signatures. Apple Developer ID signing/notarization and Azure Authenticode signing are used when their secrets are configured; without them macOS builds are ad-hoc signed and Windows installers are unsigned, and the privileged network helper is then only trusted when it is unsigned in the same way as the app.
 
 ## Provisioning state and recovery
 

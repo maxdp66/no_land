@@ -212,12 +212,12 @@ fn is_trusted_privileged_binary(path: &Path) -> bool {
         else {
             return false;
         };
+        // Signed builds require the helper to carry the app's Team ID. Ad-hoc signed builds
+        // (no Apple credentials) have no Team ID, so the helper must be ad-hoc signed too.
         if !canonical.starts_with(app_root)
             || !valid_macos_signature(&current_exe)
             || !valid_macos_signature(&canonical)
-            || macos_team_identifier(&current_exe)
-                .zip(macos_team_identifier(&canonical))
-                .is_none_or(|(app, helper)| app != helper)
+            || macos_team_identifier(&current_exe) != macos_team_identifier(&canonical)
         {
             return false;
         }
@@ -276,9 +276,12 @@ fn windows_signers_match(current_exe: &Path, helper: &Path) -> bool {
         .join("WindowsPowerShell")
         .join("v1.0")
         .join("powershell.exe");
+    // Signed builds require matching signer thumbprints. Builds made without Authenticode
+    // credentials accept a helper only when both the app and the helper are unsigned.
     let script = concat!(
         "$app = Get-AuthenticodeSignature -LiteralPath $env:NOLAND_VERIFY_APP; ",
         "$helper = Get-AuthenticodeSignature -LiteralPath $env:NOLAND_VERIFY_HELPER; ",
+        "if ($app.Status -eq 'NotSigned' -and $helper.Status -eq 'NotSigned') { exit 0 } ",
         "if ($app.Status -eq 'Valid' -and $helper.Status -eq 'Valid' -and ",
         "$null -ne $app.SignerCertificate -and $null -ne $helper.SignerCertificate -and ",
         "$app.SignerCertificate.Thumbprint -eq $helper.SignerCertificate.Thumbprint) ",
