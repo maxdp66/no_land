@@ -32,20 +32,6 @@ if [[ ! -f "$SOURCE_ARCHIVE" ]]; then
     exit 1
 fi
 
-export HOME=/root
-export RUSTUP_HOME=/root/.rustup
-export CARGO_HOME=/root/.cargo
-export PATH="/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-if ! command -v cargo >/dev/null 2>&1; then
-    if ! command -v curl >/dev/null 2>&1; then
-        echo "cargo is unavailable and curl is required for the minimal rustup bootstrap" >&2
-        exit 1
-    fi
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain stable
-fi
-
 rm -rf "$BUILD_ROOT"
 install -d -m 0755 "$BUILD_ROOT"
 tar -xzf "$SOURCE_ARCHIVE" -C "$BUILD_ROOT"
@@ -55,22 +41,43 @@ if [[ ! -f "$SOURCE_DIR/Cargo.toml" ]]; then
 fi
 
 cd "$SOURCE_DIR"
-if [[ -f Cargo.lock ]]; then
-    build_args=(--release --locked)
-else
-    build_args=(--release)
+AGENT_BINARY="prebuilt/noland-network-agent"
+# Release builds of the app ship a CI-built binary; build from source only when
+# it is absent or cannot run on this VM.
+if [[ "$(uname -m)" != "x86_64" || ! -x "$AGENT_BINARY" ]] \
+    || ldd "$AGENT_BINARY" 2>/dev/null | grep -q "not found"; then
+    export HOME=/root
+    export RUSTUP_HOME=/root/.rustup
+    export CARGO_HOME=/root/.cargo
+    export PATH="/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    if ! command -v cargo >/dev/null 2>&1; then
+        if ! command -v curl >/dev/null 2>&1; then
+            echo "cargo is unavailable and curl is required for the minimal rustup bootstrap" >&2
+            exit 1
+        fi
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+    fi
+
+    if [[ -f Cargo.lock ]]; then
+        build_args=(--release --locked)
+    else
+        build_args=(--release)
+    fi
+    if ! cargo build "${build_args[@]}" >"$BUILD_LOG" 2>&1; then
+        echo "noland-network-agent release build failed; last build output:" >&2
+        tail -n 120 "$BUILD_LOG" >&2 || true
+        exit 1
+    fi
+    AGENT_BINARY="target/release/noland-network-agent"
 fi
-if ! cargo build "${build_args[@]}" >"$BUILD_LOG" 2>&1; then
-    echo "noland-network-agent release build failed; last build output:" >&2
-    tail -n 120 "$BUILD_LOG" >&2 || true
-    exit 1
-fi
-if [[ ! -x target/release/noland-network-agent ]]; then
-    echo "release build did not produce target/release/noland-network-agent" >&2
+if [[ ! -x "$AGENT_BINARY" ]]; then
+    echo "network-agent install did not find an executable at $AGENT_BINARY" >&2
     exit 1
 fi
 
-install -o root -g root -m 0755 target/release/noland-network-agent "$BINARY_PATH"
+install -o root -g root -m 0755 "$AGENT_BINARY" "$BINARY_PATH"
 install -d -o root -g root -m 0755 /usr/local/libexec
 cat >"$WRAPPER_PATH" <<'NOLAND_NETWORK_AGENT_WRAPPER'
 __NOLAND_NETWORK_AGENT_WRAPPER__

@@ -91,6 +91,15 @@ impl RestorePlan {
     }
 }
 
+/// Evidence from checking the final destinations before committing a restore.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct RestoreVerificationReport {
+    pub files_verified: u64,
+    pub directories_verified: u64,
+    pub symlinks_verified: u64,
+    pub bytes_verified: u64,
+}
+
 struct DirectoryCleanupGuard {
     path: PathBuf,
     armed: bool,
@@ -405,22 +414,20 @@ impl<'a> RestoreTransaction<'a> {
     }
 
     /// Persists deferred associations and removes all restore-local staging and rollback data.
-    pub fn commit(mut self) -> Result<()> {
+    pub fn commit(self) -> Result<()> {
+        self.commit_verified().map(|_| ())
+    }
+
+    /// Verify every selected destination while rollback data is still available.
+    /// Success is returned only after verification and the durable commit finish.
+    pub fn commit_verified(mut self) -> Result<RestoreVerificationReport> {
         if self.state != TransactionState::Active {
             return Err(StateError::Invalid(
                 "restore transaction is not active".into(),
             ));
         }
 
-        if self
-            .remaining_chunk_refs
-            .values()
-            .any(|references| *references != 0)
-        {
-            return Err(StateError::Invalid(
-                "cannot commit restore before every selected file is published".into(),
-            ));
-        }
+        let verification = self.verify_destinations()?;
         let associations = if self.db.is_some() {
             self.pending_associations
                 .iter()
@@ -465,7 +472,97 @@ impl<'a> RestoreTransaction<'a> {
         if self.plan.staging.exists() {
             remove_directory_tree_durable(&self.plan.staging)?;
         }
-        Ok(())
+        Ok(verification)
+    }
+
+    fn verify_destinations(&self) -> Result<RestoreVerificationReport> {
+        let plan = self.plan.priority_plan();
+        if plan
+            .entries
+            .iter()
+            .any(|entry| !self.published_entries.contains(&entry.manifest_index))
+            || self
+                .remaining_chunk_refs
+                .values()
+                .any(|references| *references != 0)
+            || (!self.plan.manifest.tombstones.is_empty() && !self.tombstones_applied)
+        {
+            return Err(StateError::Invalid(
+                "cannot commit restore before every selected entry and deletion is published"
+                    .into(),
+            ));
+        }
+        let mut report = RestoreVerificationReport::default();
+        let mut destinations = BTreeSet::new();
+        for entry in plan.entries {
+            let file = &self.plan.manifest.files[entry.manifest_index];
+            let (root, destination) = resolve_destination(self.roots, file)?;
+            validate_parent_chain(&root, &destination)?;
+            if !destinations.insert(destination.clone()) {
+                return Err(StateError::Invalid(format!(
+                    "multiple manifest entries resolve to {}",
+                    destination.display()
+                )));
+            }
+            let metadata = symlink_metadata_if_present(&destination)?;
+            let verified = match file.file_type.as_str() {
+                "file" => {
+                    let matches = target_file_is_identical(&destination, file);
+                    if matches {
+                        report.files_verified += 1;
+                        report.bytes_verified += file.size;
+                    }
+                    matches
+                }
+                "directory" => {
+                    let matches = metadata.as_ref().is_some_and(|metadata| metadata.is_dir());
+                    if matches {
+                        report.directories_verified += 1;
+                    }
+                    matches
+                }
+                "symlink" => {
+                    let matches = metadata
+                        .as_ref()
+                        .is_some_and(|metadata| metadata.file_type().is_symlink())
+                        && file.symlink_target.as_ref().is_some_and(|target| {
+                            fs::read_link(&destination)
+                                .is_ok_and(|actual| actual == Path::new(target))
+                        });
+                    if matches {
+                        report.symlinks_verified += 1;
+                    }
+                    matches
+                }
+                _ => false,
+            };
+            if !verified {
+                return Err(StateError::Integrity(format!(
+                    "restored destination verification failed for {} ({})",
+                    destination.display(),
+                    file.file_type
+                )));
+            }
+        }
+        for tombstone in &self.plan.manifest.tombstones {
+            let logical = LogicalRoot::parse(&tombstone.logical_root)
+                .ok_or_else(|| StateError::UnsafePath(tombstone.logical_root.clone()))?;
+            let Some(root) = self.roots.resolve(&logical) else {
+                continue;
+            };
+            let root = canonicalize_root_if_present(root)?;
+            let destination = join_validated(&root, &tombstone.relative_path)?;
+            validate_parent_chain(&root, &destination)?;
+            // Directory tombstones are deliberately retained by publication.
+            if symlink_metadata_if_present(&destination)?.is_some_and(|metadata| !metadata.is_dir())
+            {
+                return Err(StateError::Integrity(format!(
+                    "restored deletion verification failed for {}",
+                    destination.display()
+                )));
+            }
+        }
+        Ok(report)
     }
 
     /// Reverts every path changed by this restore and removes staging after rollback succeeds.
@@ -1430,8 +1527,14 @@ fn record_cleanup_error(result: Result<()>, first_error: &mut Option<StateError>
 
 fn target_file_is_identical(path: &Path, file: &ManifestFile) -> bool {
     file.file_type == "file"
-        && fs::metadata(path)
-            .map(|metadata| metadata.is_file() && metadata.len() == file.size)
+        && fs::symlink_metadata(path)
+            .map(|metadata| {
+                metadata.is_file()
+                    && metadata.len() == file.size
+                    && file
+                        .mode
+                        .is_none_or(|mode| metadata.permissions().mode() & 0o7777 == mode & 0o7777)
+            })
             .unwrap_or(false)
         && blake3_file(path)
             .map(|hash| hash == file.file_hash)
@@ -2260,6 +2363,214 @@ mod tests {
             0
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn commit_requires_publication_even_for_entries_without_chunks() {
+        for kind in ["file", "directory", "symlink"] {
+            let root = test_dir(&format!("unpublished-{kind}"));
+            let mut entry = test_file(
+                "game/empty",
+                PersistenceClass::PersistentState,
+                SemanticRole::UserState,
+                b"",
+            );
+            entry.file_type = kind.into();
+            entry.chunks.clear();
+            entry.symlink_target = (kind == "symlink").then(|| "target".into());
+            let plan = test_plan(&root, test_manifest(vec![entry]));
+            let roots = LogicalRootMap::from_home(root.join("home"));
+            let transaction = RestoreTransaction::new(&plan, &roots, None);
+            assert!(transaction.remaining_chunk_refs.is_empty());
+            let error = transaction.commit_verified().unwrap_err();
+            assert!(error.to_string().contains("every selected entry"));
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn final_hash_verification_failure_rolls_back_an_overwrite() {
+        let root = test_dir("final-hash-rollback");
+        let file = test_file(
+            "game/save.dat",
+            PersistenceClass::PersistentState,
+            SemanticRole::UserState,
+            b"save",
+        );
+        let plan = test_plan(&root, test_manifest(vec![file.clone()]));
+        seed_chunks(&plan, &[&file]);
+        let home = root.join("home");
+        let destination = home.join(".local/share/game/save.dat");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&destination, b"original").unwrap();
+        let roots = LogicalRootMap::from_home(&home);
+        let mut transaction = RestoreTransaction::new(&plan, &roots, None);
+        transaction.publish_to(RestoreTarget::Complete).unwrap();
+        fs::write(&destination, b"evil").unwrap(); // Same size; only a hash check detects this.
+        let error = transaction.commit_verified().unwrap_err();
+        assert!(matches!(error, StateError::Integrity(_)));
+        assert_eq!(fs::read(&destination).unwrap(), b"original");
+        assert!(!plan.staging.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn final_verification_checks_empty_directories_and_symlink_targets() {
+        for kind in ["directory", "symlink"] {
+            let root = test_dir(&format!("final-{kind}"));
+            let mut entry = test_file(
+                "game/entry",
+                PersistenceClass::PersistentState,
+                SemanticRole::UserState,
+                b"",
+            );
+            entry.file_type = kind.into();
+            entry.chunks.clear();
+            entry.symlink_target = (kind == "symlink").then(|| "expected-target".into());
+            let plan = test_plan(&root, test_manifest(vec![entry]));
+            let home = root.join("home");
+            let roots = LogicalRootMap::from_home(&home);
+            let destination = home.join(".local/share/game/entry");
+            let mut transaction = RestoreTransaction::new(&plan, &roots, None);
+            transaction.publish_to(RestoreTarget::Complete).unwrap();
+            if kind == "directory" {
+                fs::remove_dir(&destination).unwrap();
+            } else {
+                fs::remove_file(&destination).unwrap();
+                std::os::unix::fs::symlink("wrong-target", &destination).unwrap();
+            }
+            let error = transaction.commit_verified().unwrap_err();
+            assert!(matches!(error, StateError::Integrity(_)));
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn symlink_to_matching_content_is_replaced_with_the_backed_up_regular_file() {
+        let root = test_dir("regular-versus-symlink");
+        let file = test_file(
+            "game/save.dat",
+            PersistenceClass::PersistentState,
+            SemanticRole::UserState,
+            b"save",
+        );
+        let plan = test_plan(&root, test_manifest(vec![file.clone()]));
+        seed_chunks(&plan, &[&file]);
+        let home = root.join("home");
+        let destination = home.join(".local/share/game/save.dat");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        let external = root.join("external");
+        fs::write(&external, b"save").unwrap();
+        std::os::unix::fs::symlink(&external, &destination).unwrap();
+        let roots = LogicalRootMap::from_home(&home);
+        let mut transaction = RestoreTransaction::new(&plan, &roots, None);
+        let report = transaction.publish_to(RestoreTarget::Complete).unwrap();
+        assert_eq!(report.reused_entries, 0);
+        let verification = transaction.commit_verified().unwrap();
+        assert_eq!(verification.files_verified, 1);
+        assert_eq!(verification.bytes_verified, 4);
+        assert!(fs::symlink_metadata(destination).unwrap().is_file());
+        assert_eq!(fs::read(external).unwrap(), b"save");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn matching_contents_with_wrong_permissions_restore_the_saved_mode() {
+        let root = test_dir("restore-executable-mode");
+        let mut file = test_file(
+            "game/save.dat",
+            PersistenceClass::PersistentState,
+            SemanticRole::UserState,
+            b"save",
+        );
+        file.mode = Some(0o755);
+        let plan = test_plan(&root, test_manifest(vec![file.clone()]));
+        seed_chunks(&plan, &[&file]);
+        let home = root.join("home");
+        let destination = home.join(".local/share/game/save.dat");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&destination, b"save").unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).unwrap();
+        let roots = LogicalRootMap::from_home(&home);
+        let mut transaction = RestoreTransaction::new(&plan, &roots, None);
+        assert_eq!(
+            transaction
+                .publish_to(RestoreTarget::Complete)
+                .unwrap()
+                .reused_entries,
+            0
+        );
+        transaction.commit_verified().unwrap();
+        assert_eq!(
+            fs::metadata(destination).unwrap().permissions().mode() & 0o7777,
+            0o755
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_reconstruction_never_replaces_the_existing_file() {
+        for corrupt in [b"evil".as_slice(), b"wrong-length".as_slice()] {
+            let root = test_dir("corrupt-reconstruction");
+            let file = test_file(
+                "game/save.dat",
+                PersistenceClass::PersistentState,
+                SemanticRole::UserState,
+                b"save",
+            );
+            let plan = test_plan(&root, test_manifest(vec![file.clone()]));
+            seed_chunks(&plan, &[&file]);
+            fs::write(
+                restore_chunk_path(&plan, &file.chunks[0].hash).unwrap(),
+                corrupt,
+            )
+            .unwrap();
+            let home = root.join("home");
+            let destination = home.join(".local/share/game/save.dat");
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::write(&destination, b"original").unwrap();
+            let roots = LogicalRootMap::from_home(&home);
+            let mut transaction = RestoreTransaction::new(&plan, &roots, None);
+            assert!(matches!(
+                transaction.publish_to(RestoreTarget::Complete),
+                Err(StateError::Integrity(_))
+            ));
+            drop(transaction);
+            assert_eq!(fs::read(destination).unwrap(), b"original");
+            assert!(!plan.staging.exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn deletion_must_be_applied_and_verified_before_commit() {
+        let root = test_dir("verify-tombstone");
+        let mut manifest = test_manifest(vec![]);
+        manifest.tombstones.push(ManifestTombstone {
+            logical_root: "$XDG_DATA_HOME".into(),
+            relative_path: "game/deleted.dat".into(),
+            reason: "deleted from backup".into(),
+        });
+        let plan = test_plan(&root, manifest);
+        let home = root.join("home");
+        let destination = home.join(".local/share/game/deleted.dat");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&destination, b"original").unwrap();
+        let roots = LogicalRootMap::from_home(&home);
+        let premature = RestoreTransaction::new(&plan, &roots, None);
+        assert!(premature.commit_verified().is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"original");
+        let retry_plan = test_plan(&root, plan.manifest.clone());
+        let mut transaction = RestoreTransaction::new(&retry_plan, &roots, None);
+        transaction.publish_to(RestoreTarget::Complete).unwrap();
+        assert!(!destination.exists());
+        fs::write(&destination, b"reappeared").unwrap();
+        assert!(matches!(
+            transaction.commit_verified(),
+            Err(StateError::Integrity(_))
+        ));
+        assert_eq!(fs::read(&destination).unwrap(), b"original");
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn test_manifest(files: Vec<ManifestFile>) -> BundleManifest {

@@ -8,10 +8,11 @@ use std::time::Duration;
 
 use crate::errors::{AppError, AppResult};
 use crate::services::remote_exec::RemoteExec;
+use crate::services::vm_agents;
 use crate::utils::shell;
 
 const AGENT_SOCKET: &str = "/run/noland/state-agent.sock";
-const REQUIRED_AGENT_API_VERSION: u64 = 18;
+const REQUIRED_AGENT_API_VERSION: u64 = 20;
 
 pub async fn ensure_state_agent(remote: &RemoteExec, target_user: &str) -> AppResult<()> {
     if probe_agent(remote).await.ok().and_then(|health| {
@@ -175,6 +176,17 @@ fn pack_state_agent_sources(source_dir: &Path, archive_path: &Path) -> AppResult
     let mut archive = tar::Builder::new(encoder);
 
     append_archive_dir(&mut archive, source_dir, source_dir)?;
+    // Ship the CI-built binaries when this app bundles them; the bootstrap and
+    // lifecycle installers then skip the Rust toolchain and source build.
+    vm_agents::append_prebuilt(
+        &mut archive,
+        Path::new(""),
+        &[
+            vm_agents::STATE_AGENT,
+            vm_agents::LIFECYCLE_AGENT,
+            vm_agents::OBSERVER_BPF,
+        ],
+    )?;
     archive
         .finish()
         .map_err(|error| AppError::Command(format!("finish state-agent archive: {error}")))?;

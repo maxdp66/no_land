@@ -76,25 +76,39 @@ find_bpf_object() {
   find "$SRC/target/release/build" -path '*/out/noland_observer.bpf.o' -type f -print -quit 2>/dev/null
 }
 
+# CI-built binaries shipped by release builds of the app. They are used when
+# this VM can run them; otherwise the agent is built from the uploaded source.
+prebuilt_usable() {
+  [[ "$(uname -m)" == "x86_64" ]] || return 1
+  [[ -x "$SRC/prebuilt/noland-state-agent" && -f "$SRC/prebuilt/noland_observer.bpf.o" ]] || return 1
+  ! ldd "$SRC/prebuilt/noland-state-agent" 2>/dev/null | grep -q "not found"
+}
+
 mkdir -p "$NOLAND_STATE_ROOT" "$NOLAND_RUN_ROOT"
 
-if ! command -v clang >/dev/null 2>&1 \
-  || ! command -v cc >/dev/null 2>&1 \
-  || ! command -v make >/dev/null 2>&1 \
-  || ! command -v pkg-config >/dev/null 2>&1 \
-  || ! pkg-config --exists libelf; then
-  install_build_dependencies
-fi
-require_bpf_compiler
+if prebuilt_usable; then
+  echo "Using prebuilt noland-state-agent"
+  install -m 0755 "$SRC/prebuilt/noland-state-agent" "$BIN"
+  export NOLAND_BPF_OBJECT="$SRC/prebuilt/noland_observer.bpf.o"
+else
+  if ! command -v clang >/dev/null 2>&1 \
+    || ! command -v cc >/dev/null 2>&1 \
+    || ! command -v make >/dev/null 2>&1 \
+    || ! command -v pkg-config >/dev/null 2>&1 \
+    || ! pkg-config --exists libelf; then
+    install_build_dependencies
+  fi
+  require_bpf_compiler
 
-if ! command -v cargo >/dev/null 2>&1; then
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-  # shellcheck disable=SC1091
-  source "$HOME/.cargo/env"
+  if ! command -v cargo >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    # shellcheck disable=SC1091
+    source "$HOME/.cargo/env"
+  fi
+  cd "$SRC"
+  cargo build --release --locked -p noland-state-agent
+  install -m 0755 "$SRC/target/release/noland-state-agent" "$BIN"
 fi
-cd "$SRC"
-cargo build --release -p noland-state-agent
-install -m 0755 "$SRC/target/release/noland-state-agent" "$BIN"
 
 BPF_OBJECT="$(find_bpf_object)"
 if [[ ! -f "$BPF_OBJECT" ]]; then

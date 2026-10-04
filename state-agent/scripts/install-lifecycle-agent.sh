@@ -101,24 +101,31 @@ if ! command -v xprop >/dev/null 2>&1; then
 fi
 command -v xprop >/dev/null 2>&1
 
-export HOME=/root
-export CARGO_HOME=/root/.cargo
-export RUSTUP_HOME=/root/.rustup
-export PATH="$CARGO_HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-if ! command -v cargo >/dev/null 2>&1; then
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain stable --profile minimal \
-      >"$STAGING_ROOT/rustup.log" 2>&1
-fi
+LIFECYCLE_BINARY="$SOURCE_ROOT/prebuilt/noland-lifecycle-agent"
+# Release builds of the app ship a CI-built binary; build from source only when
+# it is absent or cannot run on this VM.
+if [[ "$(uname -m)" != "x86_64" || ! -x "$LIFECYCLE_BINARY" ]] \
+  || ldd "$LIFECYCLE_BINARY" 2>/dev/null | grep -q "not found"; then
+  export HOME=/root
+  export CARGO_HOME=/root/.cargo
+  export RUSTUP_HOME=/root/.rustup
+  export PATH="$CARGO_HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  if ! command -v cargo >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable --profile minimal \
+        >"$STAGING_ROOT/rustup.log" 2>&1
+  fi
 
-cd "$SOURCE_ROOT"
-if ! cargo build --release -p noland-lifecycle-agent --locked \
-  >"$STAGING_ROOT/build.log" 2>&1; then
-  echo "noland-lifecycle-agent build failed" >&2
-  tail -n 120 "$STAGING_ROOT/build.log" >&2 || true
-  exit 1
+  cd "$SOURCE_ROOT"
+  if ! cargo build --release -p noland-lifecycle-agent --locked \
+    >"$STAGING_ROOT/build.log" 2>&1; then
+    echo "noland-lifecycle-agent build failed" >&2
+    tail -n 120 "$STAGING_ROOT/build.log" >&2 || true
+    exit 1
+  fi
+  LIFECYCLE_BINARY="$SOURCE_ROOT/target/release/noland-lifecycle-agent"
 fi
-if [[ ! -x "$SOURCE_ROOT/target/release/noland-lifecycle-agent" ]]; then
+if [[ ! -x "$LIFECYCLE_BINARY" ]]; then
   echo "lifecycle-agent build completed without an executable" >&2
   exit 1
 fi
@@ -135,8 +142,7 @@ cleanup_destination_temps() {
 }
 trap cleanup_destination_temps EXIT
 
-install -o root -g root -m 0755 \
-  "$SOURCE_ROOT/target/release/noland-lifecycle-agent" "$real_temp"
+install -o root -g root -m 0755 "$LIFECYCLE_BINARY" "$real_temp"
 mv -f "$real_temp" "$REAL_BINARY"
 
 cat >"$wrapper_temp" <<EOF

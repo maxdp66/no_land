@@ -356,7 +356,7 @@ export function PostWireguardModal({
             </h4>
             <p className="mt-2">{setup.lastError.message}</p>
             {setup.lastError.details && (
-              <p className="mt-2 whitespace-pre-wrap break-words text-[#ffbdc7]">
+              <p className="mt-2 whitespace-pre-wrap wrap-break-word text-[#ffbdc7]">
                 {setup.lastError.details}
               </p>
             )}

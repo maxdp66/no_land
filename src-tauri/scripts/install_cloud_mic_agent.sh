@@ -184,19 +184,30 @@ Jitter latency:   ${JITTER_MS} ms
 SUMMARY
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
 # Runtime-only packages used by the pipeline and verification. The receiver
 # writes raw PCM to a PipeWire-Pulse recording-source FIFO; no playback plugin is used.
-apt-get install -y --no-install-recommends \
-    pipewire \
-    pipewire-pulse \
-    wireplumber \
-    pulseaudio-utils \
-    python3 \
-    gstreamer1.0-tools \
-    gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good \
+RUNTIME_PACKAGES=(
+    pipewire
+    pipewire-pulse
+    wireplumber
+    pulseaudio-utils
+    python3
+    gstreamer1.0-tools
+    gstreamer1.0-plugins-base
+    gstreamer1.0-plugins-good
     ufw
+)
+missing_packages=()
+for pkg in "${RUNTIME_PACKAGES[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+        missing_packages+=("$pkg")
+    fi
+done
+# Provisioning normally installs these up front; only touch apt if some are missing.
+if (( ${#missing_packages[@]} > 0 )); then
+    apt-get update -y
+    apt-get install -y --no-install-recommends "${missing_packages[@]}"
+fi
 
 install -d -m 0755 -o "$USER_NAME" -g "$group_name" "$INSTALL_DIR"
 install -d -m 0755 -o "$USER_NAME" -g "$group_name" "$SERVICE_DIR"

@@ -57,7 +57,7 @@ export function SharedStorageSyncModal({
     setPendingAction({
       key: "sync-modal.load",
       label: "Loading shared storage tree",
-      detail: "Reading the application catalog from Shared Storage.",
+      detail: "Reading saved applications and folders from Shared Storage.",
       mode: "indeterminate",
       progress: null,
       startedAt: Date.now()
@@ -120,7 +120,7 @@ export function SharedStorageSyncModal({
     return (
       <div key={`${entry.path}-${entry.isDir ? "dir" : "file"}`}>
         <div
-          className="flex items-center gap-2 rounded border border-[#30365d] bg-[#11162a] px-2 py-1"
+          className="flex items-center gap-2 rounded-sm border border-[#30365d] bg-[#11162a] px-2 py-1"
           style={{ marginLeft: `${depth * 12}px` }}
         >
           {entry.isDir ? (

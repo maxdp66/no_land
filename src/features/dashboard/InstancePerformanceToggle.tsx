@@ -24,7 +24,7 @@ export function InstancePerformanceToggle({ instance }: { instance: RentedInstan
   }
 
   return (
-    <div className="mt-3 rounded border border-[#3a4068] bg-[#10152f]/60 px-3 py-2">
+    <div className="mt-3 rounded-sm border border-[#3a4068] bg-[#10152f]/60 px-3 py-2">
       <label className="flex cursor-pointer items-center justify-between gap-3 text-sm text-[#d7e6f7]">
         <span>Performance overlay</span>
         <input

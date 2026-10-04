@@ -22,9 +22,31 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "12.0"
 
 jobs:
+  vm-agents:
+    name: build-vm-agents
+    runs-on: ubuntu-24.04
+    # Oldest supported VM release, so the binaries' glibc requirement is met
+    # on every Ubuntu/Debian image the provisioning flow accepts.
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Build the agents that run on the remote VM
+        run: bash scripts/ci/build-vm-agents.sh
+      - name: Upload VM agent binaries
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vm-agents
+          path: src-tauri/vm-agents/x86_64-unknown-linux-gnu/
+          if-no-files-found: error
+          retention-days: 7
+
   build-unix:
     name: build-${{ matrix.platform }}-${{ matrix.arch }}
+    needs: vm-agents
     environment: Secrets
+    env:
+      # Apple signing and notarization are optional: without them macOS builds are ad-hoc signed.
+      APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -72,8 +94,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ca-certificates curl openssh-client xdg-utils xvfb dbus-x11 cpio file binutils libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev wayland-protocols libdecor-0-dev pkg-config libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl gstreamer1.0-vaapi gstreamer1.0-x gstreamer1.0-pipewire rpm2cpio libssl-dev libopus-dev libpulse-dev patchelf lintian
 
-      - name: Require Apple production credentials
-        if: matrix.platform == 'macos'
+      - name: Check signing credentials
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -84,14 +105,24 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo 'TAURI_SIGNING_PRIVATE_KEY: missing (required to sign updater artifacts)' >&2
+            exit 1
+          fi
+          echo 'TAURI_SIGNING_PRIVATE_KEY: present'
+          if [[ "${{ matrix.platform }}" != 'macos' ]]; then exit 0; fi
+          if [[ "$APPLE_SIGNING_ENABLED" != 'true' ]]; then
+            echo '::warning title=Unsigned macOS build::APPLE_CERTIFICATE is not set; building an ad-hoc signed, un-notarized app.'
+            exit 0
+          fi
           missing=0
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             if [[ -z "${!name:-}" ]]; then echo "$name: missing" >&2; missing=1; else echo "$name: present"; fi
           done
           test "$missing" -eq 0
 
       - name: Import Apple Developer ID certificate
-        if: matrix.platform == 'macos'
+        if: matrix.platform == 'macos' && env.APPLE_SIGNING_ENABLED == 'true'
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -107,7 +138,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
       - name: Resolve Apple signing identity
-        if: matrix.platform == 'macos'
+        if: matrix.platform == 'macos' && env.APPLE_SIGNING_ENABLED == 'true'
         shell: bash
         run: |
           identities=$(security find-identity -v -p codesigning build.keychain)
@@ -115,13 +146,19 @@ jobs:
           test -n "$cert_id" || { echo 'Developer ID Application identity not found.' >&2; exit 1; }
           echo "APPLE_SIGNING_IDENTITY=$cert_id" >> "$GITHUB_ENV"
 
+      - name: Bundle prebuilt VM agent binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: vm-agents
+          path: src-tauri/vm-agents/x86_64-unknown-linux-gnu
+
       - name: Install dependencies and stage managed tools
         run: |
           npm ci
           node scripts/stage-ci-managed-tools.mjs --target "${{ matrix.target }}"
           node scripts/set-release-version.mjs "${{ inputs.version }}"
 
-      - name: Build signed/notarized Tauri application
+      - name: Build Tauri application
         shell: bash
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -132,7 +169,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          NOLAND_REQUIRE_SIGNED_RELEASE: "1"
+          NOLAND_REQUIRE_SIGNED_RELEASE: ${{ env.APPLE_SIGNING_ENABLED == 'true' && '1' || '0' }}
         run: npm run tauri:build -- --target "${{ matrix.target }}"
 
       - name: Repair and re-sign portable AppImage metadata
@@ -162,15 +199,19 @@ jobs:
           extract_dir=$(mktemp -d)
           ditto -x -k "$zip_path" "$extract_dir"
           codesign --verify --deep --strict --verbose=2 "$extract_dir/${product_name}.app"
-          xcrun stapler validate -v "$extract_dir/${product_name}.app"
-          spctl -a -vvv -t exec "$extract_dir/${product_name}.app"
+          if [[ "$APPLE_SIGNING_ENABLED" == 'true' ]]; then
+            xcrun stapler validate -v "$extract_dir/${product_name}.app"
+            spctl -a -vvv -t exec "$extract_dir/${product_name}.app"
+          fi
           updater="src-tauri/target/${{ matrix.target }}/release/bundle/macos/${product_name}.app.tar.gz"
           test -s "$updater" && test -s "$updater.sig"
           updater_dir=$(mktemp -d)
           tar -xzf "$updater" -C "$updater_dir"
           codesign --verify --deep --strict --verbose=2 "$updater_dir/${product_name}.app"
-          xcrun stapler validate -v "$updater_dir/${product_name}.app"
-          spctl -a -vvv -t exec "$updater_dir/${product_name}.app"
+          if [[ "$APPLE_SIGNING_ENABLED" == 'true' ]]; then
+            xcrun stapler validate -v "$updater_dir/${product_name}.app"
+            spctl -a -vvv -t exec "$updater_dir/${product_name}.app"
+          fi
           rm -rf "$extract_dir" "$updater_dir"
 
       - name: Verify bundled sidecars and runtime
@@ -207,7 +248,11 @@ jobs:
 
   build-windows:
     name: build-windows-${{ matrix.arch }}
+    needs: vm-agents
     environment: Secrets
+    env:
+      # Azure Artifact Signing is optional: without it Windows installers ship without Authenticode.
+      WINDOWS_SIGNING_ENABLED: ${{ secrets.AZURE_CLIENT_ID != '' }}
     permissions:
       contents: read
     strategy:
@@ -236,6 +281,12 @@ jobs:
             src-tauri
             mic-sidecar
 
+      - name: Bundle prebuilt VM agent binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: vm-agents
+          path: src-tauri/vm-agents/x86_64-unknown-linux-gnu
+
       - name: Install dependencies and stage managed tools
         shell: pwsh
         run: |
@@ -243,13 +294,19 @@ jobs:
           node scripts/stage-ci-managed-tools.mjs --target "${{ matrix.target }}"
           node scripts/set-release-version.mjs "${{ inputs.version }}"
 
-      - name: Require Artifact Signing credentials
+      - name: Check signing credentials
         shell: pwsh
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) { throw 'TAURI_SIGNING_PRIVATE_KEY is required to sign updater artifacts.' }
+          if ($env:WINDOWS_SIGNING_ENABLED -ne 'true') {
+            Write-Output '::warning title=Unsigned Windows build::AZURE_CLIENT_ID is not set; installers will not be Authenticode-signed.'
+            exit 0
+          }
           foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_TENANT_ID')) {
             if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
               throw "Missing Artifact Signing secret: $name"
@@ -265,6 +322,7 @@ jobs:
           npm run tauri:build -- --target "${{ matrix.target }}"
 
       - name: Sign Windows installers with Azure Artifact Signing
+        if: env.WINDOWS_SIGNING_ENABLED == 'true'
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -293,6 +351,7 @@ jobs:
           exclude-interactive-browser-credential: true
 
       - name: Verify Windows Authenticode signatures
+        if: env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
         run: |
           $bundle = "src-tauri/target/${{ matrix.target }}/release/bundle"
@@ -304,6 +363,7 @@ jobs:
           }
 
       - name: Regenerate Tauri updater signatures after Authenticode signing
+        if: env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

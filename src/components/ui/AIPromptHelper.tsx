@@ -71,7 +71,7 @@ export function AIPromptHelper({ topic, promptText, variant = "both", className 
         {(variant === "icon" || variant === "both") && (
           <button
             onClick={handleAction}
-            className="flex h-7 w-7 items-center justify-center border border-[#3e4270] bg-[#10152f] hover:bg-[#202754] transition-colors duration-100 shadow-[0_0_10px_rgba(97,247,255,0.1)] rounded"
+            className="flex h-7 w-7 items-center justify-center border border-[#3e4270] bg-[#10152f] hover:bg-[#202754] transition-colors duration-100 shadow-[0_0_10px_rgba(97,247,255,0.1)] rounded-sm"
             title={`Copy AI explanation prompt about ${topic}`}
             type="button"
           >
@@ -90,7 +90,7 @@ export function AIPromptHelper({ topic, promptText, variant = "both", className 
       </div>
 
       {showNotification && (
-        <div className="absolute left-0 top-full z-50 mt-2 w-72 border border-[#44d6ff]/50 bg-[#090b16] p-3 text-[1.05rem] leading-snug text-[#cfe7ff] shadow-[0_0_15px_rgba(68,214,255,0.3)] animate-fade-in text-left">
+        <div className="absolute left-0 top-full z-50 mt-2 w-72 border border-neon-cyan/50 bg-[#090b16] p-3 text-[1.05rem] leading-snug text-[#cfe7ff] shadow-[0_0_15px_rgba(68,214,255,0.3)] animate-fade-in text-left">
           <p className="font-semibold text-neon-cyan mb-1">
             {isCopied ? "Prompt Copied! 🤖" : "AI Explanation Prompt"}
           </p>

@@ -8,6 +8,7 @@
 - /home/*/.gnupg/**
 - /home/*/.local/share/keyrings/**
 - /home/*/.config/Keyring/**
+- /home/*/.config/BraveSoftware/Brave-Browser/**/Cookies*
 - /home/*/.config/google-chrome/**/Cookies*
 - /home/*/.config/chromium/**/Cookies*
 - /home/*/.mozilla/firefox/**/cookies.sqlite*
