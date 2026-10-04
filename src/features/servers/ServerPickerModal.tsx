@@ -406,7 +406,7 @@ export function ServerPickerModal({
           </p>
         )}
 
-        <div className="mb-3 grid gap-3 rounded border border-[#3e4270] p-3 md:grid-cols-[minmax(14rem,1fr)_auto] md:items-end">
+        <div className="mb-3 grid gap-3 rounded-sm border border-[#3e4270] p-3 md:grid-cols-[minmax(14rem,1fr)_auto] md:items-end">
           <label className="flex min-w-0 flex-col justify-end">
             <span className="block pb-1 text-[1.2rem] leading-none text-[#b4c8de]">
               Country
@@ -439,7 +439,7 @@ export function ServerPickerModal({
           </Button>
         </div>
 
-        <details className="mb-3 rounded border border-[#3e4270] bg-[#0b0f23]/50 p-3">
+        <details className="mb-3 rounded-sm border border-[#3e4270] bg-[#0b0f23]/50 p-3">
           <summary className="cursor-pointer list-none">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -472,7 +472,7 @@ export function ServerPickerModal({
           </div>
 
           <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded border border-[#3e4270] bg-[#0b0f23]/70 p-3">
+            <div className="rounded-sm border border-[#3e4270] bg-[#0b0f23]/70 p-3">
               <p className="font-display text-[10px] uppercase tracking-[0.12em] text-[#9ad9ff]">
                 1. Sort by price
               </p>
@@ -492,7 +492,7 @@ export function ServerPickerModal({
               </div>
             </div>
 
-            <div className="rounded border border-[#3e4270] bg-[#0b0f23]/70 p-3">
+            <div className="rounded-sm border border-[#3e4270] bg-[#0b0f23]/70 p-3">
               <p className="font-display text-[10px] uppercase tracking-[0.12em] text-[#9ad9ff]">
                 2. Sort by reliability
               </p>
@@ -512,7 +512,7 @@ export function ServerPickerModal({
               </div>
             </div>
 
-            <div className="rounded border border-[#3e4270] bg-[#0b0f23]/70 p-3">
+            <div className="rounded-sm border border-[#3e4270] bg-[#0b0f23]/70 p-3">
               <p className="font-display text-[10px] uppercase tracking-[0.12em] text-[#9ad9ff]">
                 3. Filter by price
               </p>
@@ -578,7 +578,7 @@ export function ServerPickerModal({
               </div>
             </div>
 
-            <div className="rounded border border-[#3e4270] bg-[#0b0f23]/70 p-3">
+            <div className="rounded-sm border border-[#3e4270] bg-[#0b0f23]/70 p-3">
               <p className="font-display text-[10px] uppercase tracking-[0.12em] text-[#9ad9ff]">
                 4. Filter by reliability
               </p>
@@ -784,7 +784,7 @@ export function ServerPickerModal({
         {pendingOfferId !== null && (
           <ModalFrame
             panelClassName="glass-panel pixel-frame max-w-md"
-            zIndexClassName="z-[60]"
+            zIndexClassName="z-60"
             labelledBy="storage-picker-title"
           >
             <ModalBody className="p-5">
@@ -798,7 +798,7 @@ export function ServerPickerModal({
                 Set disk space for this instance.
               </p>
               <label className="mt-4 flex flex-col gap-1.5">
-                <span className="font-display text-[11px] uppercase tracking-[0.1em] text-[#9ad9ff]">
+                <span className="font-display text-[11px] uppercase tracking-widest text-[#9ad9ff]">
                   Storage (GB)
                 </span>
                 <input

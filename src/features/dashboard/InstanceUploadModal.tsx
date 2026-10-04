@@ -96,7 +96,7 @@ export function InstanceUploadModal({ instance, onUpload, onClose }: Props) {
         <ModalBody className="space-y-4 px-5 py-4">
           <button
             type="button"
-            className="flex w-full items-center justify-between gap-4 rounded border border-[#30365d] bg-[#11162a] px-4 py-3 text-left transition hover:border-neon-cyan disabled:opacity-50"
+            className="flex w-full items-center justify-between gap-4 rounded-sm border border-[#30365d] bg-[#11162a] px-4 py-3 text-left transition hover:border-neon-cyan disabled:opacity-50"
             onClick={() => setFolderPickerOpen(true)}
             disabled={starting}
           >
@@ -107,10 +107,10 @@ export function InstanceUploadModal({ instance, onUpload, onClose }: Props) {
             <span className="shrink-0 font-display text-[10px] uppercase tracking-[0.12em] text-neon-cyan">Choose folder &gt;</span>
           </button>
 
-          <div className="flex rounded border border-[#30365d] bg-[#0b0f23] p-1" aria-label="Native picker type">
+          <div className="flex rounded-sm border border-[#30365d] bg-[#0b0f23] p-1" aria-label="Native picker type">
             <button
               type="button"
-              className={`flex-1 rounded px-3 py-2 font-display text-[10px] uppercase tracking-[0.14em] transition ${pickerMode === "files" ? "bg-neon-cyan/15 text-neon-cyan" : "text-[#7183ac] hover:text-white"}`}
+              className={`flex-1 rounded-sm px-3 py-2 font-display text-[10px] uppercase tracking-[0.14em] transition ${pickerMode === "files" ? "bg-neon-cyan/15 text-neon-cyan" : "text-[#7183ac] hover:text-white"}`}
               onClick={() => setPickerMode("files")}
               disabled={starting}
               aria-pressed={pickerMode === "files"}
@@ -119,7 +119,7 @@ export function InstanceUploadModal({ instance, onUpload, onClose }: Props) {
             </button>
             <button
               type="button"
-              className={`flex-1 rounded px-3 py-2 font-display text-[10px] uppercase tracking-[0.14em] transition ${pickerMode === "folders" ? "bg-neon-cyan/15 text-neon-cyan" : "text-[#7183ac] hover:text-white"}`}
+              className={`flex-1 rounded-sm px-3 py-2 font-display text-[10px] uppercase tracking-[0.14em] transition ${pickerMode === "folders" ? "bg-neon-cyan/15 text-neon-cyan" : "text-[#7183ac] hover:text-white"}`}
               onClick={() => setPickerMode("folders")}
               disabled={starting}
               aria-pressed={pickerMode === "folders"}
@@ -132,7 +132,7 @@ export function InstanceUploadModal({ instance, onUpload, onClose }: Props) {
             type="button"
             onClick={() => void openNativePicker()}
             disabled={starting}
-            className={`flex min-h-72 w-full flex-col items-center justify-center rounded border-2 border-dashed px-8 py-12 text-center transition disabled:cursor-wait ${dragActive ? "border-neon-lime bg-neon-lime/10 shadow-[inset_0_0_30px_rgba(123,255,72,0.08)]" : "border-[#46517a] bg-[#080b18] hover:border-neon-cyan hover:bg-neon-cyan/5"}`}
+            className={`flex min-h-72 w-full flex-col items-center justify-center rounded-sm border-2 border-dashed px-8 py-12 text-center transition disabled:cursor-wait ${dragActive ? "border-neon-lime bg-neon-lime/10 shadow-[inset_0_0_30px_rgba(123,255,72,0.08)]" : "border-[#46517a] bg-[#080b18] hover:border-neon-cyan hover:bg-neon-cyan/5"}`}
           >
             <span className={`font-mono text-5xl ${dragActive ? "text-neon-lime" : "text-neon-cyan"}`} aria-hidden="true">↑</span>
             <p className="mt-5 font-display text-sm uppercase tracking-[0.16em] text-white">
@@ -241,7 +241,7 @@ function RemoteFolderPicker({ instanceId, selectedDestination, onSelect, onClose
     return (
       <div key={path}>
         <div
-          className={`flex items-center gap-2 rounded border px-2 py-1 ${isSelected ? "border-neon-cyan bg-neon-cyan/10" : "border-[#30365d] bg-[#11162a]"}`}
+          className={`flex items-center gap-2 rounded-sm border px-2 py-1 ${isSelected ? "border-neon-cyan bg-neon-cyan/10" : "border-[#30365d] bg-[#11162a]"}`}
           style={{ marginLeft: `${depth * 12}px` }}
         >
           <button type="button" className="w-5 text-left text-[#7ab6ff]" onClick={() => void toggleFolder(path)} aria-label={`${isExpanded ? "Collapse" : "Expand"} ${pathName(path)}`}>
@@ -258,7 +258,7 @@ function RemoteFolderPicker({ instanceId, selectedDestination, onSelect, onClose
   };
 
   return (
-    <ModalFrame panelClassName="glass-panel pixel-frame max-w-3xl" zIndexClassName="z-[60]">
+    <ModalFrame panelClassName="glass-panel pixel-frame max-w-3xl" zIndexClassName="z-60">
       <div className="flex shrink-0 items-start justify-between gap-4 border-b-2 border-[#3e4270] px-5 py-4">
         <div>
           <p className="font-display text-[10px] uppercase tracking-[0.16em] text-neon-cyan">Remote filesystem · desktop user</p>
@@ -273,14 +273,14 @@ function RemoteFolderPicker({ instanceId, selectedDestination, onSelect, onClose
           <Button variant="ghost" onClick={() => void loadRoot("/")}>Filesystem Root</Button>
         </div>
 
-        <div className="min-h-64 max-h-[45dvh] overflow-y-auto rounded border border-[#38466e] bg-[#080b18] p-2">
+        <div className="min-h-64 max-h-[45dvh] overflow-y-auto rounded-sm border border-[#38466e] bg-[#080b18] p-2">
           {!rootPath ? (
             <p className="animate-pulse p-3 text-[1.15rem] text-[#ffd166]">Loading folder tree...</p>
           ) : (
             <div className="space-y-1">{renderFolder(rootPath, 0)}</div>
           )}
         </div>
-        {error && <p className="rounded border border-red-500/30 bg-red-900/20 p-3 text-sm text-red-300">{error}</p>}
+        {error && <p className="rounded-sm border border-red-500/30 bg-red-900/20 p-3 text-sm text-red-300">{error}</p>}
       </ModalBody>
 
       <div className="flex shrink-0 items-center justify-between gap-3 border-t-2 border-[#3e4270] px-5 py-4">

@@ -313,7 +313,7 @@ function UpdateAvailableModal({
   }
 
   return (
-    <ModalFrame panelClassName="glass-panel pixel-frame max-w-xl" zIndexClassName="z-[120]">
+    <ModalFrame panelClassName="glass-panel pixel-frame max-w-xl" zIndexClassName="z-120">
       <div className="flex shrink-0 items-center justify-between border-b-2 border-[#3e4270] px-5 py-4">
         <div>
           <h2
@@ -352,7 +352,7 @@ function UpdateAvailableModal({
                 <span>{progress.phase === "downloading" ? "Downloading update" : progress.phase === "installing" ? "Installing update" : "Restarting Noland Connect"}</span>
                 <span>{progress.percent != null ? `${progress.percent}%` : "Working..."}</span>
               </div>
-              <div className="h-2 overflow-hidden rounded bg-[#171d35]">
+              <div className="h-2 overflow-hidden rounded-sm bg-[#171d35]">
                 <div className={`h-full bg-neon-cyan transition-[width] ${progress.percent == null ? "w-1/3 animate-pulse" : ""}`} style={progress.percent != null ? { width: `${progress.percent}%` } : undefined} />
               </div>
             </div>
@@ -423,7 +423,7 @@ function CloseWithInstancesModal({
   onSetupStorage: () => void;
 }) {
   return (
-    <ModalFrame panelClassName="glass-panel pixel-frame max-w-2xl" zIndexClassName="z-[140]">
+    <ModalFrame panelClassName="glass-panel pixel-frame max-w-2xl" zIndexClassName="z-140">
       <div className="border-b-2 border-[#9a6536] px-5 py-4">
         <h2 className="pixel-heading glitch-title font-display text-base text-[#ffd3a3]" data-text="Instances still running">
           Instances still running
@@ -835,9 +835,9 @@ export function App() {
   return (
     <>
       {error && (
-        <div className="fixed right-4 top-4 z-[100] max-w-md border-2 border-[#ff687d] bg-[#431a28] px-4 py-3 text-[1.2rem] text-[#ffd3dc] shadow-[0_0_0_2px_#090a17,inset_0_0_0_2px_#60243a]">
+        <div className="fixed right-4 top-4 z-100 max-w-md border-2 border-[#ff687d] bg-[#431a28] px-4 py-3 text-[1.2rem] text-[#ffd3dc] shadow-[0_0_0_2px_#090a17,inset_0_0_0_2px_#60243a]">
           <div className="flex items-start justify-between gap-3">
-            <p className="break-words break-all">{error}</p>
+            <p className="wrap-break-word break-all">{error}</p>
             <div className="flex shrink-0 flex-col items-end gap-2">
               <button
                 className="font-display text-[10px] uppercase tracking-[0.12em]"
@@ -913,7 +913,7 @@ export function App() {
         (blockingAction.key === "instance.storage.sync" ||
           blockingAction.key === "instance.storage.export" ||
           blockingAction.key === "instance.files.upload") && (
-        <div className="pointer-events-none fixed bottom-4 right-4 z-[105] w-[min(24rem,calc(100vw-2rem))]">
+        <div className="pointer-events-none fixed bottom-4 right-4 z-105 w-[min(24rem,calc(100vw-2rem))]">
           <BlockingLoaderOverlay
             action={blockingAction}
             inline

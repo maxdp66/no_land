@@ -105,8 +105,8 @@ export function LaunchLibraryModal({
     <ModalFrame
       labelledBy="launch-library-title"
       panelClassName="pixel-frame max-w-5xl bg-[#090d20] text-white"
-      overlayClassName="bg-[#02040be8] backdrop-blur-sm"
-      zIndexClassName="z-[60]"
+      overlayClassName="bg-[#02040be8] backdrop-blur-xs"
+      zIndexClassName="z-60"
     >
       <div className="flex items-start justify-between gap-4 border-b border-[#283252] p-5">
         <div>
@@ -141,7 +141,7 @@ export function LaunchLibraryModal({
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search software..."
             aria-label="Search software"
-            className="min-w-0 flex-1 border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-sm text-[#dff8ff] outline-none placeholder:text-[#5e7396] focus:border-neon-cyan"
+            className="min-w-0 flex-1 border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-sm text-[#dff8ff] outline-hidden placeholder:text-[#5e7396] focus:border-neon-cyan"
           />
           <div className="flex items-center gap-2">
             <p className="text-xs text-[#7890ae]">Artwork provided by IGDB</p>

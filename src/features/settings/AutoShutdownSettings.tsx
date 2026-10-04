@@ -131,7 +131,7 @@ export function AutoShutdownSettings({
           </p>
         </div>
 
-        <label className="flex items-center gap-3 rounded border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.05rem] text-[#dff8ff]">
+        <label className="flex items-center gap-3 rounded-sm border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.05rem] text-[#dff8ff]">
           <input
             type="checkbox"
             className="h-4 w-4 accent-cyan-400"
@@ -160,7 +160,7 @@ export function AutoShutdownSettings({
             value={timeoutMode}
             disabled={busy}
             onChange={(event) => setTimeoutMode(event.currentTarget.value)}
-            className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.2rem] leading-none text-[#dff8ff] outline-none transition focus:border-neon-cyan focus:shadow-[inset_0_0_0_2px_#121731,0_0_0_2px_rgba(68,214,255,0.28)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.2rem] leading-none text-[#dff8ff] outline-hidden transition focus:border-neon-cyan focus:shadow-[inset_0_0_0_2px_#121731,0_0_0_2px_rgba(68,214,255,0.28)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {TIMEOUT_OPTIONS.map(({ value, label }) => (
               <option key={value} value={value}>
@@ -191,7 +191,7 @@ export function AutoShutdownSettings({
             onChange={(event) => setCustomHours(event.currentTarget.value)}
           />
         ) : (
-          <div className="rounded border border-[#30385d] bg-[#0b0f23]/60 p-3 text-[1.05rem] text-[#8fa9c8]">
+          <div className="rounded-sm border border-[#30385d] bg-[#0b0f23]/60 p-3 text-[1.05rem] text-[#8fa9c8]">
             Shutdown starts after {inactivityHours} continuous inactive
             {inactivityHours === 1 ? " hour" : " hours"}.
           </div>
@@ -220,7 +220,7 @@ export function AutoShutdownSettings({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 rounded border border-[#30385d] bg-[#0b0f23]/60 p-3 text-[1.05rem] md:grid-cols-3">
+      <div className="mt-4 grid gap-2 rounded-sm border border-[#30385d] bg-[#0b0f23]/60 p-3 text-[1.05rem] md:grid-cols-3">
         <p className="text-[#a8bed6]">
           Last status:{" "}
           <span className="capitalize text-[#dff8ff]">
@@ -242,7 +242,7 @@ export function AutoShutdownSettings({
       </div>
 
       {runtimeStatus ? (
-        <div className="mt-3 rounded border border-cyan-400/30 bg-cyan-950/20 p-3 text-[1.05rem] text-cyan-100">
+        <div className="mt-3 rounded-sm border border-cyan-400/30 bg-cyan-950/20 p-3 text-[1.05rem] text-cyan-100">
           <div className="flex flex-wrap gap-x-5 gap-y-1">
             <span>Runtime: {runtimeStatus.state}</span>
             <span>
