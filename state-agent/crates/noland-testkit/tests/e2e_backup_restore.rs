@@ -112,7 +112,16 @@ async fn backup_commit_restore_roundtrip() {
     let mut restore = RestoreTransaction::new(&plan, &fresh_roots, Some(&agent.db));
     let report = restore.publish_to(RestoreTarget::Complete).unwrap();
     assert!(report.published_entries > 0);
-    restore.commit().unwrap();
+    let verification = restore.commit_verified().unwrap();
+    assert_eq!(
+        verification.files_verified,
+        plan.manifest
+            .files
+            .iter()
+            .filter(|file| file.file_type == "file")
+            .count() as u64
+    );
+    assert_eq!(verification.bytes_verified, plan.manifest.logical_size());
 
     assert_eq!(
         std::fs::read(fresh_home.join(".local/share/example-game/saves/world/level.dat")).unwrap(),

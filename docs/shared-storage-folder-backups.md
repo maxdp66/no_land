@@ -35,8 +35,31 @@ contents restore at the same home-relative path on the destination VM, using the
 existing verified download and rollback transaction. Existing unrelated files
 are retained. Each folder save captures its current tree independently, so files
 removed from the source do not reappear in later snapshots. A restored folder can
-be saved again. Agent API version 19 makes the desktop refresh older VM agents.
+be saved again. Agent API version 20 makes the desktop refresh older VM agents.
 
 Regression coverage includes a folder round trip to a fresh home, empty
 folders and symlinks, path rejection, upload starting before all files have been
 processed, upload failure and retry cleanup, and selection parsing.
+
+## Restore completion verification
+
+A restore checks authenticated packs and chunk hashes on download, then checks
+reconstructed file sizes and BLAKE3 hashes before atomic publication. Before
+committing, it now rechecks every selected final destination: regular-file type,
+size, BLAKE3 hash and saved permission bits; empty-directory existence/type; and
+symlink existence/type and exact target. Every selected entry, including those
+without chunks, must have been published. Applicable tombstones must have been
+applied and their deleted file destinations remain absent.
+
+The worker reports a verifying phase and persists destination verification counts
+(files, directories, symlinks and bytes) with successful operation progress.
+Verification runs while rollback data is retained, so a failure prevents the
+completion notification and reverts changes owned by the restore. Keep writing
+applications closed during restore; verification describes the destinations at
+commit time and cannot prevent later changes by another process.
+
+Regression tests cover same-size corruption, wrong-length chunks, unpublished
+empty entries, changed symlink targets, removed empty directories, executable
+permissions, and a corrupted encrypted cloud pack followed by repair and retry.
+Folder retries preserve unrelated existing files. File and folder round trips
+assert their final verification counts.

@@ -407,7 +407,21 @@ pub async fn run_restore_with_session(
                     serde_json::json!(complete_report.reused_entries);
                 progress.detail_json["milestones"] =
                     serde_json::json!(["READY_TO_LAUNCH", "COMPLETE"]);
-                restore.commit()?;
+                persist_restore_progress(
+                    agent,
+                    operation_id,
+                    &mut progress,
+                    "verifying",
+                    total_files,
+                    "Verifying restored files, directories, and symlinks before completion",
+                )?;
+                let verification_started = Instant::now();
+                let verification = restore.commit_verified()?;
+                metrics.validation_duration_ms = metrics
+                    .validation_duration_ms
+                    .saturating_add(elapsed_ms(verification_started));
+                progress.detail_json["destination_verification"] =
+                    serde_json::to_value(verification)?;
                 if let Some(folder) = restored_folder {
                     agent
                         .db

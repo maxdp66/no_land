@@ -285,7 +285,15 @@ mod tests {
         let roots = LogicalRootMap::from_home(&destination.config.home);
         let mut transaction = RestoreTransaction::new(&plan, &roots, Some(&destination.db));
         transaction.publish_to(RestoreTarget::Complete).unwrap();
-        transaction.commit().unwrap();
+        let verification = transaction.commit_verified().unwrap();
+        assert_eq!(verification.files_verified, 1);
+        assert_eq!(verification.directories_verified, 4);
+        assert_eq!(
+            verification.bytes_verified,
+            b"my saved project".len() as u64
+        );
+        #[cfg(unix)]
+        assert_eq!(verification.symlinks_verified, 1);
         destination
             .db
             .add_known_root(&id, "folder", &restored_root.to_string_lossy())
@@ -312,6 +320,90 @@ mod tests {
             .files
             .iter()
             .any(|file| file.relative_path.ends_with("content/save.dat")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn corrupted_cloud_pack_preserves_existing_folder_and_retry_verifies_restored_contents() {
+        let root = std::env::temp_dir().join(format!("folder-corruption-{}", uuid::Uuid::new_v4()));
+        let source = StateAgent::boot(AgentConfig::isolated(root.join("source"))).unwrap();
+        let folder = source.config.home.join("project");
+        fs::create_dir_all(folder.join("empty/nested")).unwrap();
+        fs::write(folder.join("data.bin"), b"content").unwrap();
+        fs::write(folder.join("empty.txt"), b"").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("data.bin", folder.join("current")).unwrap();
+        let id = register(&source, "project").unwrap();
+        let master = MasterKey::generate();
+        let cloud = root.join("cloud");
+        let manifest = run_backup_to_local(
+            &source,
+            &id,
+            BackupMode::CompleteApplication,
+            cloud.clone(),
+            &master,
+        )
+        .await
+        .unwrap();
+        let storage = LocalStorage::new(&cloud);
+        let index = read_pack_index(&storage, &master, &id, manifest.bundle_id)
+            .await
+            .unwrap();
+        let remote_pack = cloud.join(noland_state_core::pack_key(&index[0].pack_id));
+        let original_pack = fs::read(&remote_pack).unwrap();
+        let mut corrupted = original_pack.clone();
+        *corrupted.last_mut().unwrap() ^= 0x80;
+        fs::write(&remote_pack, corrupted).unwrap();
+        let destination =
+            StateAgent::boot(AgentConfig::isolated(root.join("destination"))).unwrap();
+        let restored = destination.config.home.join("project");
+        fs::create_dir_all(&restored).unwrap();
+        fs::write(restored.join("data.bin"), b"previous version").unwrap();
+        fs::write(restored.join("unrelated.txt"), b"keep me").unwrap();
+        let plan = prepare_restore(
+            &storage,
+            &master,
+            &destination.config.paths,
+            &id,
+            manifest.bundle_id,
+            RestoreMode::CompleteApplication,
+        )
+        .await
+        .unwrap();
+        assert!(download_and_verify(&storage, &master, &plan, &index)
+            .await
+            .is_err());
+        assert_eq!(
+            fs::read(restored.join("data.bin")).unwrap(),
+            b"previous version"
+        );
+        assert!(!restored.join("empty.txt").exists());
+        // Retry the same staging workspace: the invalid cache must be replaced.
+        fs::write(&remote_pack, original_pack).unwrap();
+        download_and_verify(&storage, &master, &plan, &index)
+            .await
+            .unwrap();
+        destination
+            .db
+            .upsert_app(&AppIdentity::new(id, "Folder: project"))
+            .unwrap();
+        let roots = LogicalRootMap::from_home(&destination.config.home);
+        let mut transaction = RestoreTransaction::new(&plan, &roots, Some(&destination.db));
+        transaction.publish_to(RestoreTarget::Complete).unwrap();
+        let report = transaction.commit_verified().unwrap();
+        assert_eq!(report.files_verified, 2);
+        assert_eq!(report.directories_verified, 3);
+        assert_eq!(report.bytes_verified, 7);
+        #[cfg(unix)]
+        assert_eq!(report.symlinks_verified, 1);
+        assert_eq!(fs::read(restored.join("data.bin")).unwrap(), b"content");
+        assert_eq!(fs::metadata(restored.join("empty.txt")).unwrap().len(), 0);
+        assert!(restored.join("empty/nested").is_dir());
+        assert_eq!(
+            fs::read(restored.join("unrelated.txt")).unwrap(),
+            b"keep me"
+        );
+        assert!(!plan.staging.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
