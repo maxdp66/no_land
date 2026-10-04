@@ -50,6 +50,7 @@ dpkg-query() { echo 'install ok installed'; }
 apt_run() { printf 'APT %s\\n' "$*"; }
 dpkg() { :; }
 test() { :; }
+apt-mark() { printf 'MARK %s\\n' "$*"; }
 repair_packages
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -64,6 +65,7 @@ repair_packages
         for package in ("qml-module-org-kde-pipewire", "libkpipewire5", "libkpipewiredmabuf5", "libkpipewirerecord5"):
             self.assertIn(f"{package}=1.0.5", desktop_install)
         self.assertNotIn("plasma-workspace=", lines[1])
+        self.assertIn('MARK manual sunshine plasma-workspace plasma-desktop kwin-x11 pipewire pipewire-pulse wireplumber', lines)
 
     def test_desktop_solver_failure_does_not_block_library_repair_or_install_kde(self):
         result = bash("""
@@ -166,6 +168,10 @@ worker
             (state / 'reboot-from').write_text('previous-boot')
             result = bash(f'''
 STATE='{state}'
+os_codename() {{ echo noble; }}
+disable_stale_wine_source() {{ :; }}
+apt_run() {{ :; }}
+repair_packages() {{ echo REPAIR_PACKAGES_AFTER_BOOT; }}
 verify() {{ echo VERIFIED; }}
 systemctl() {{ echo "SERVICE $*"; }}
 worker
@@ -173,7 +179,28 @@ worker
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((state / 'phase').read_text(), 'complete')
             self.assertIn('VERIFIED', result.stdout)
+            self.assertLess(result.stdout.index('REPAIR_PACKAGES_AFTER_BOOT'), result.stdout.index('VERIFIED'))
             self.assertIn('SERVICE disable noland-distro-upgrade.service', result.stdout)
+
+    def test_post_reboot_package_failure_never_marks_upgrade_complete(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = pathlib.Path(folder)
+            (state / 'phase').write_text('verify')
+            (state / 'user').write_text('root')
+            (state / 'reboot-from').write_text('previous-boot')
+            result = bash(f'''
+STATE='{state}'
+os_codename() {{ echo noble; }}
+disable_stale_wine_source() {{ :; }}
+apt_run() {{ :; }}
+repair_packages() {{ return 100; }}
+verify() {{ echo UNEXPECTED_VERIFY; }}
+systemctl() {{ echo "UNEXPECTED_SERVICE $*"; }}
+worker
+''')
+            self.assertEqual(result.returncode, 100)
+            self.assertEqual((state / 'phase').read_text(), 'failed')
+            self.assertNotIn('UNEXPECTED_', result.stdout)
 
 
 if __name__ == "__main__":

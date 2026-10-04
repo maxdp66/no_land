@@ -100,6 +100,9 @@ repair_packages() {
   apt_run -y --fix-broken --allow-downgrades --no-remove install "${pinned[@]}"
   apt_run check
   test -x /usr/bin/startplasma-x11
+  # These are required by Noland's dedicated services, even without a display
+  # manager or metapackage. Keep later autoremove from discarding the desktop.
+  apt-mark manual sunshine plasma-workspace plasma-desktop kwin-x11 pipewire pipewire-pulse wireplumber
 }
 repair_audio() {
   loginctl enable-linger "$TARGET_USER"
@@ -220,6 +223,13 @@ worker() {
       [[ $(cat /proc/sys/kernel/random/boot_id) != "$(cat "$STATE/reboot-from")" ]] || {
         log 'Reboot still required. Reboot the VM to finish verification.'; return 1;
       }
+      [[ $(os_codename) == noble ]]
+      # Reconcile packages again after reboot before declaring success. This
+      # also recovers jobs that reached this phase with an older helper.
+      log 'Checking Noble streaming and KDE packages after reboot.'
+      disable_stale_wine_source
+      apt_run update
+      repair_packages
       verify
       printf complete > "$STATE/phase"
       systemctl disable "$UNIT"
