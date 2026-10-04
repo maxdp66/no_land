@@ -54,6 +54,7 @@ export function InstanceCardActions({
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
         <Button
+          size="compact"
           className="w-full"
           disabled={actionDisabled}
           loading={loadingKey === "provisioning.flow"}
@@ -65,6 +66,7 @@ export function InstanceCardActions({
         </Button>
 
         <Button
+          size="compact"
           variant="secondary"
           className="w-full"
           disabled={actionDisabled}
@@ -77,8 +79,9 @@ export function InstanceCardActions({
 
       <div className="grid grid-cols-2 gap-2">
         <Button
+          size="compact"
           variant="ghost"
-          className="w-full text-[14px]"
+          className="w-full"
           disabled={actionDisabled || transferRunning || !isRunning}
           loading={loadingKey === "instance.storage.export"}
           loadingText="Saving files..."
@@ -88,8 +91,9 @@ export function InstanceCardActions({
         </Button>
 
         <Button
+          size="compact"
           variant="ghost"
-          className="w-full text-[14px]"
+          className="w-full"
           disabled={actionDisabled || transferRunning || !isRunning}
           loading={loadingKey === "instance.storage.sync"}
           loadingText="Syncing files..."
@@ -101,8 +105,9 @@ export function InstanceCardActions({
 
       <div className="grid grid-cols-3 gap-2">
         <Button
+          size="compact"
           variant="ghost"
-          className="w-full text-[14px]"
+          className="w-full"
           disabled={actionDisabled || !isRunning}
           onClick={() => onDisplay(instance.instanceId)}
         >
@@ -110,8 +115,9 @@ export function InstanceCardActions({
         </Button>
 
         <Button
+          size="compact"
           variant="ghost"
-          className="w-full text-[14px]"
+          className="w-full"
           disabled={actionDisabled}
           loading={loadingKey === "instance.services.reboot"}
           loadingText="Rebooting..."
@@ -121,8 +127,9 @@ export function InstanceCardActions({
         </Button>
 
         <Button
+          size="compact"
           variant="ghost"
-          className={`w-full text-[14px] ${showDestroyConfirm ? "text-red-400 border-red-500/50" : ""}`}
+          className={`w-full ${showDestroyConfirm ? "text-red-400 border-red-500/50" : ""}`}
           disabled={actionDisabled}
           loading={loadingKey === "instance.destroy"}
           loadingText="Destroying..."
