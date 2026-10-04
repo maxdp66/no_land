@@ -76,7 +76,7 @@ Execution order:
 
 The publish job is unreachable unless every preceding job succeeds. It also requires all of:
 
-- repository exactly `FelipeBarrosCode/no_land`;
+- repository exactly `maxdp66/no_land`;
 - ref exactly `refs/heads/main`;
 - event exactly `push` or `workflow_dispatch`;
 - protected `Secrets` environment approval where configured.
