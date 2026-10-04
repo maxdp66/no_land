@@ -250,19 +250,15 @@ pub async fn commit_bundle_with_index(
     .await
 }
 
-pub async fn commit_bundle_with_index_for_operation(
+/// Upload a bounded pack batch without publishing a bundle. Metadata is committed last.
+pub async fn upload_packs_for_operation(
     provider: &dyn SharedStorageProvider,
-    master: &MasterKey,
-    manifest: &BundleManifest,
     pack_files: &[(String, std::path::PathBuf)],
-    pack_index_json: Option<&[u8]>,
+    commit_id: Uuid,
     db: Option<&noland_state_db::StateDb>,
     operation_id: Option<Uuid>,
 ) -> Result<()> {
     provider.ensure_root().await?;
-    let keys = derive_keys(master);
-    let bundle_prefix = bundle_dir(&manifest.app.app_id, manifest.bundle_id);
-
     let all_pack_uploads: Vec<_> = pack_files
         .iter()
         .map(|(pack_id, path)| {
@@ -326,7 +322,7 @@ pub async fn commit_bundle_with_index_for_operation(
     if let Some(db) = db {
         for upload in &all_pack_uploads {
             db.journal_put(
-                &manifest.commit_id.to_string(),
+                &commit_id.to_string(),
                 upload.key.as_str(),
                 "upload",
                 "ok",
@@ -334,6 +330,24 @@ pub async fn commit_bundle_with_index_for_operation(
             )?;
         }
     }
+
+    Ok(())
+}
+
+pub async fn commit_bundle_with_index_for_operation(
+    provider: &dyn SharedStorageProvider,
+    master: &MasterKey,
+    manifest: &BundleManifest,
+    pack_files: &[(String, std::path::PathBuf)],
+    pack_index_json: Option<&[u8]>,
+    db: Option<&noland_state_db::StateDb>,
+    operation_id: Option<Uuid>,
+) -> Result<()> {
+    provider.ensure_root().await?;
+    let keys = derive_keys(master);
+    let bundle_prefix = bundle_dir(&manifest.app.app_id, manifest.bundle_id);
+
+    upload_packs_for_operation(provider, pack_files, manifest.commit_id, db, operation_id).await?;
 
     let mut metadata = Vec::new();
     if let Some(index) = pack_index_json {

@@ -133,6 +133,7 @@ impl SharedStorageManager {
             "StartBackup",
             json!({
                 "app_id": app_id,
+                "folder_path": app_id.strip_prefix("/folders/"),
                 "mode": mode,
                 "performance_mode": performance_mode,
                 "session": session,
@@ -851,7 +852,7 @@ fn apps_to_entries(apps: &serde_json::Value) -> Vec<SharedStorageObjectEntry> {
 fn catalog_to_entries(catalog: &serde_json::Value) -> Vec<SharedStorageObjectEntry> {
     let mut out = vec![SharedStorageObjectEntry {
         path: "/catalog".into(),
-        name: "Shared Storage apps".into(),
+        name: "Saved applications and folders".into(),
         parent_path: "/".into(),
         is_dir: true,
     }];

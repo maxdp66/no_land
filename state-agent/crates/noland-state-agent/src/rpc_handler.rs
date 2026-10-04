@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::operation_manager::{CancelOutcome, OperationLane};
 use crate::StateAgent;
 
-const AGENT_API_VERSION: u64 = 18;
+const AGENT_API_VERSION: u64 = 19;
 const DEFAULT_RECENT_OPERATION_LIMIT: usize = 50;
 const MAX_DIAGNOSTIC_OPERATION_LIMIT: usize = 1_000;
 
@@ -117,18 +117,28 @@ impl RpcHandler for AgentRpc {
             }
             "GetDirtyApps" => Ok(serde_json::to_value(agent.db.list_dirty_apps()?)?),
             "StartBackup" => {
+                let folder_id = request
+                    .params
+                    .get("folder_path")
+                    .and_then(|value| value.as_str())
+                    .map(|path| crate::folders::register(agent, path))
+                    .transpose()?;
                 let app_id_raw = request
                     .params
                     .get("app_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("*");
-                let mode = BackupMode::parse(
-                    request
-                        .params
-                        .get("mode")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("personal_state"),
-                );
+                let mode = if folder_id.is_some() {
+                    BackupMode::CompleteApplication
+                } else {
+                    BackupMode::parse(
+                        request
+                            .params
+                            .get("mode")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("personal_state"),
+                    )
+                };
                 let performance = BackupPerformanceMode::parse(
                     request
                         .params
@@ -140,7 +150,9 @@ impl RpcHandler for AgentRpc {
                 let master = master_from_params(&request.params, agent)?;
                 let retry_operation_id = internal_retry_operation_id(&request.params)?;
                 let op_id = retry_operation_id.unwrap_or_else(uuid::Uuid::new_v4);
-                let app_id = if app_id_raw == "*" || app_id_raw == "_all" {
+                let app_id = if let Some(id) = folder_id {
+                    Some(id)
+                } else if app_id_raw == "*" || app_id_raw == "_all" {
                     None
                 } else {
                     Some(AppId(app_id_raw.into()))

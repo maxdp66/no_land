@@ -1,7 +1,10 @@
 //! Noland remote state agent: always-on tracking, backup, restore, seal.
 
 pub mod backup;
+#[cfg(test)]
+mod backup_stream_tests;
 pub mod checkpoint;
+pub mod folders;
 pub mod observer;
 pub mod operation_manager;
 pub mod reconcile;
@@ -114,6 +117,24 @@ impl StateAgent {
             return Err(StateError::Database(integrity));
         }
         noland_storage::shred_all_ephemeral_sessions(&self.config.paths.run_root)?;
+        // Backup retries regenerate packs and live-read the source. Old backup
+        // staging is disposable; restore workspaces keep their recovery journals.
+        for root in [&self.config.paths.packs, &self.config.paths.snapshots] {
+            for entry in std::fs::read_dir(root)? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    if root == &self.config.paths.snapshots {
+                        noland_snapshot::discard_root(&entry.path())?;
+                    } else {
+                        std::fs::remove_dir_all(entry.path())?;
+                    }
+                } else {
+                    std::fs::remove_file(entry.path())?;
+                }
+            }
+        }
+        noland_cas::LocalCas::new(self.config.paths.cache.join("cas/chunks"))?
+            .evict_to(512 * 1024 * 1024)?;
         let restore_recovery = noland_restore::recover_interrupted_restores(&self.config.paths)?;
         for failure in &restore_recovery.failures {
             tracing::error!(

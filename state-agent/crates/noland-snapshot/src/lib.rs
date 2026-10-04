@@ -86,8 +86,21 @@ pub fn create_view(
 }
 
 pub fn discard(view: &SnapshotView) -> Result<()> {
-    if view.root.exists() {
-        fs::remove_dir_all(&view.root)?;
+    discard_root(&view.root)
+}
+
+/// Remove an owned snapshot workspace, including a read-only Btrfs subvolume.
+pub fn discard_root(root: &Path) -> Result<()> {
+    let btrfs = root.join("btrfs");
+    if btrfs.is_dir() {
+        // Ordinary copy views are still removable if Btrfs is unavailable.
+        let _ = Command::new("btrfs")
+            .args(["subvolume", "delete"])
+            .arg(&btrfs)
+            .output();
+    }
+    if root.exists() {
+        fs::remove_dir_all(root)?;
     }
     Ok(())
 }

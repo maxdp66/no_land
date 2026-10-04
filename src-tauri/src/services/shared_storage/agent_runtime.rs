@@ -12,7 +12,7 @@ use crate::services::vm_agents;
 use crate::utils::shell;
 
 const AGENT_SOCKET: &str = "/run/noland/state-agent.sock";
-const REQUIRED_AGENT_API_VERSION: u64 = 18;
+const REQUIRED_AGENT_API_VERSION: u64 = 19;
 
 pub async fn ensure_state_agent(remote: &RemoteExec, target_user: &str) -> AppResult<()> {
     if probe_agent(remote).await.ok().and_then(|health| {

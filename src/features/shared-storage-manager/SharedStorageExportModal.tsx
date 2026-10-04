@@ -48,6 +48,7 @@ export function SharedStorageExportModal({
 }: Props) {
   const [entries, setEntries] = useState<SharedStorageObjectEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [folderPath, setFolderPath] = useState("");
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [performanceMode, setPerformanceMode] =
     useState<BackupPerformanceMode>("balanced");
@@ -67,6 +68,7 @@ export function SharedStorageExportModal({
       startedAt: Date.now()
     });
     setSelectedPaths([]);
+    setFolderPath("");
     setPerformanceMode("balanced");
     void onLoadObjects(instanceId)
       .then((result) => {
@@ -126,11 +128,32 @@ export function SharedStorageExportModal({
         <div className="shrink-0 flex items-center justify-between border-b-2 border-[#3e4270] px-5 py-4">
           <div>
             <h2 className="font-display text-base text-white">Export To Shared Storage</h2>
-            <p className="text-[1.2rem] text-[#b4c8de]">Choose applications the tracker learned. Noland packs their state through the state agent.</p>
+            <p className="text-[1.2rem] text-[#b4c8de]">Choose applications or add a whole folder from the VM.</p>
           </div>
           <Button variant="ghost" onClick={onClose} disabled={busy || loading}>Close</Button>
         </div>
         <ModalBody className="px-5 py-4">
+          <div className="mb-4 space-y-2">
+            <label className="block text-[1.15rem] text-[#d7e8ff]" htmlFor="backup-folder-path">VM folder path</label>
+            <div className="flex gap-2">
+              <input id="backup-folder-path" value={folderPath} disabled={busy || loading}
+                onChange={(event) => setFolderPath(event.target.value)}
+                placeholder="Documents/My Project"
+                className="min-w-0 flex-1 border border-[#3f476c] bg-[#0b0f23] px-3 text-[#dff8ff]" />
+              <Button variant="ghost" disabled={busy || loading || !folderPath.trim()} onClick={() => {
+                const selection = `/folders/${folderPath.trim()}`;
+                setSelectedPaths((current) => current.includes(selection) ? current : [...current, selection]);
+                setFolderPath("");
+              }}>Add Folder</Button>
+            </div>
+            <p className="text-[1.05rem] text-[#9ec0e4]">Use a path inside your VM home directory. Includes nested files and empty folders. Restore a saved bundle from Sync to the same relative path on the destination VM. Close apps that write to it before saving.</p>
+            {selectedPaths.filter((path) => path.startsWith("/folders/")).map((path) => (
+              <div key={path} className="flex items-center justify-between gap-2 text-[#d7e8ff]">
+                <span>{path.slice("/folders/".length)}</span>
+                <Button variant="ghost" disabled={busy || loading} onClick={() => toggleSelected(path)}>Remove</Button>
+              </div>
+            ))}
+          </div>
           {loading ? (
             pendingAction ? <BlockingLoaderOverlay action={pendingAction} inline className="max-w-none p-4" /> : <p className="text-[1.2rem] text-[#b4c8de]">Loading remote machine files...</p>
           ) : roots.length === 0 ? (
@@ -202,13 +225,16 @@ export function SharedStorageExportModal({
                 setPendingAction({
                   key: "export-modal.run",
                   label: "Exporting selected files",
-                  detail: "Backing up selected application state through the state agent.",
+                  detail: "Saving selected applications and folders to shared storage.",
                   mode: "indeterminate",
                   progress: null,
                   startedAt: Date.now()
                 });
-                await onConfirmExport(selectedPaths, performanceMode);
-                setPendingAction(null);
+                try {
+                  await onConfirmExport(selectedPaths, performanceMode);
+                } finally {
+                  setPendingAction(null);
+                }
               }}
             >
               Export Selected

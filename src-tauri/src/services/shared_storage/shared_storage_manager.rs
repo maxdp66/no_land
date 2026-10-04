@@ -66,12 +66,24 @@ impl SharedStorageManager {
         selected_paths: &[String],
         performance_mode: BackupPerformanceMode,
     ) -> AppResult<String> {
-        let app_ids = selected_app_ids(selected_paths);
-        let ids: Vec<String> = if app_ids.is_empty() {
-            vec!["*".to_string()]
-        } else {
-            app_ids
-        };
+        let (ids, folders) = super::backup_selection::parse_backup_selections(selected_paths)
+            .map_err(AppError::InvalidInput)?;
+        for folder in folders {
+            Self::start_agent_backup(
+                context,
+                remote,
+                instance_id,
+                target_user,
+                &folder,
+                "complete_application",
+                performance_mode,
+                None,
+            )
+            .await?;
+        }
+        if ids.is_empty() {
+            return Ok("Folder backup completed".into());
+        }
         Self::trigger_backup(
             context,
             remote,
@@ -1122,19 +1134,6 @@ fn backup_mode_for_selection(run_all: bool) -> &'static str {
     } else {
         "complete_application"
     }
-}
-
-fn selected_app_ids(paths: &[String]) -> Vec<String> {
-    let mut ids = Vec::new();
-    for path in paths {
-        if let Some(rest) = path.strip_prefix("/apps/") {
-            let id = rest.trim_matches('/');
-            if !id.is_empty() && id != "Applications" {
-                ids.push(id.to_string());
-            }
-        }
-    }
-    ids
 }
 
 fn parse_catalog_selection(path: &str) -> crate::errors::AppResult<(String, String)> {
