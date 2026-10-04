@@ -393,13 +393,13 @@ export function MicControls({ instanceId, compact = false }: MicControlsProps) {
             type="button"
             onClick={handleRefreshDevices}
             disabled={loading}
-            className="rounded border border-gray-600 bg-gray-800 px-2 py-1 text-[10px] text-gray-300 transition-colors hover:bg-gray-700 disabled:opacity-50"
+            className="rounded-sm border border-gray-600 bg-gray-800 px-2 py-1 text-[10px] text-gray-300 transition-colors hover:bg-gray-700 disabled:opacity-50"
           >
             Refresh
           </button>
         </div>
         <select
-          className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-sm text-gray-200"
+          className="w-full bg-gray-800 border border-gray-600 rounded-sm px-3 py-1.5 text-sm text-gray-200"
           value={config?.deviceId ?? "default"}
           onChange={(e) => handleDeviceChange(e.target.value)}
           disabled={loading || devicesLoading || devices.length === 0}
@@ -429,7 +429,7 @@ export function MicControls({ instanceId, compact = false }: MicControlsProps) {
       <div>
         <label className="text-xs text-gray-400 block mb-1">Quality</label>
         <select
-          className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-sm text-gray-200"
+          className="w-full bg-gray-800 border border-gray-600 rounded-sm px-3 py-1.5 text-sm text-gray-200"
           value={config?.qualityProfile ?? "standard"}
           onChange={(e) =>
             handleProfileChange(e.target.value as MicQualityProfile)
@@ -441,7 +441,7 @@ export function MicControls({ instanceId, compact = false }: MicControlsProps) {
         </select>
       </div>
 
-      <label className="flex items-center justify-between gap-3 rounded border border-gray-700 bg-gray-800/60 px-3 py-2 text-xs text-gray-300">
+      <label className="flex items-center justify-between gap-3 rounded-sm border border-gray-700 bg-gray-800/60 px-3 py-2 text-xs text-gray-300">
         <span>
           Auto-connect with game stream
           <span className="mt-0.5 block text-[10px] text-gray-500">
@@ -461,21 +461,21 @@ export function MicControls({ instanceId, compact = false }: MicControlsProps) {
         <button
           onClick={handleMuteToggle}
           disabled={loading || !isActive}
-          className="px-3 py-1.5 rounded border border-gray-600 bg-gray-800 text-xs text-gray-200 transition-colors hover:bg-gray-700 disabled:opacity-50"
+          className="px-3 py-1.5 rounded-sm border border-gray-600 bg-gray-800 text-xs text-gray-200 transition-colors hover:bg-gray-700 disabled:opacity-50"
         >
           {status?.muted ? "Unmute" : "Mute"}
         </button>
         <button
           onClick={handleReconnect}
           disabled={loading || !isActive}
-          className="px-3 py-1.5 rounded border border-gray-600 bg-gray-800 text-xs text-gray-200 transition-colors hover:bg-gray-700 disabled:opacity-50"
+          className="px-3 py-1.5 rounded-sm border border-gray-600 bg-gray-800 text-xs text-gray-200 transition-colors hover:bg-gray-700 disabled:opacity-50"
         >
           Reconnect Mic
         </button>
         <button
           onClick={handleRecreateRemoteDevice}
           disabled={loading}
-          className="px-3 py-1.5 rounded border border-gray-600 bg-gray-800 text-xs text-gray-200 transition-colors hover:bg-gray-700 disabled:opacity-50"
+          className="px-3 py-1.5 rounded-sm border border-gray-600 bg-gray-800 text-xs text-gray-200 transition-colors hover:bg-gray-700 disabled:opacity-50"
         >
           Recreate Remote Device
         </button>
@@ -526,7 +526,7 @@ export function MicControls({ instanceId, compact = false }: MicControlsProps) {
       )}
 
       {(error || status?.error) && (
-        <p className="text-red-400 text-xs bg-red-900/30 rounded px-2 py-1">
+        <p className="text-red-400 text-xs bg-red-900/30 rounded-sm px-2 py-1">
           {error ?? status?.error}
         </p>
       )}

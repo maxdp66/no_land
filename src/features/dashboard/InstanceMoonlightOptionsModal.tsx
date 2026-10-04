@@ -53,7 +53,7 @@ function ToggleRow({
   onChange,
 }: ToggleRowProps) {
   return (
-    <label className="flex items-start gap-3 rounded border border-[#283252] bg-[#0d132b] p-3">
+    <label className="flex items-start gap-3 rounded-sm border border-[#283252] bg-[#0d132b] p-3">
       <input
         type="checkbox"
         className="mt-1 h-4 w-4 accent-cyan-400"
@@ -185,7 +185,7 @@ export function InstanceMoonlightOptionsModal({ instance, onClose }: Props) {
                   Frame pacing
                 </span>
                 <select
-                  className="w-full rounded border border-[#354269] bg-[#080d1f] px-3 py-2 text-white outline-none focus:border-neon-cyan"
+                  className="w-full rounded-sm border border-[#354269] bg-[#080d1f] px-3 py-2 text-white outline-hidden focus:border-neon-cyan"
                   value={latency.pacingMode}
                   disabled={saving}
                   onChange={(event) =>
@@ -205,7 +205,7 @@ export function InstanceMoonlightOptionsModal({ instance, onClose }: Props) {
                   Frame buffer
                 </span>
                 <select
-                  className="w-full rounded border border-[#354269] bg-[#080d1f] px-3 py-2 text-white outline-none focus:border-neon-cyan"
+                  className="w-full rounded-sm border border-[#354269] bg-[#080d1f] px-3 py-2 text-white outline-hidden focus:border-neon-cyan"
                   value={latency.frameBufferMode}
                   disabled={saving}
                   onChange={(event) =>
@@ -233,7 +233,7 @@ export function InstanceMoonlightOptionsModal({ instance, onClose }: Props) {
         )}
 
         {error ? (
-          <div className="rounded border border-red-400/50 bg-red-950/50 p-3 text-sm text-red-200">
+          <div className="rounded-sm border border-red-400/50 bg-red-950/50 p-3 text-sm text-red-200">
             {error}
           </div>
         ) : null}

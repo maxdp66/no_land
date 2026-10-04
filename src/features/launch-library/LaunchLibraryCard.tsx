@@ -25,7 +25,7 @@ interface SoftwareLaunchCardProps {
 }
 
 const cardClassName =
-  "glass-panel group flex min-h-[21rem] w-full flex-col overflow-hidden p-0 text-left transition duration-100 enabled:hover:border-neon-cyan enabled:hover:shadow-[inset_0_0_0_2px_#090a17,inset_0_0_0_4px_#2d315b,0_0_0_2px_#090a17,0_0_22px_rgba(68,214,255,0.35)] disabled:cursor-not-allowed disabled:opacity-55";
+  "glass-panel group flex min-h-84 w-full flex-col overflow-hidden p-0 text-left transition duration-100 enabled:hover:border-neon-cyan enabled:hover:shadow-[inset_0_0_0_2px_#090a17,inset_0_0_0_4px_#2d315b,0_0_0_2px_#090a17,0_0_22px_rgba(68,214,255,0.35)] disabled:cursor-not-allowed disabled:opacity-55";
 
 const terminalStatuses = new Set([
   "completed",
@@ -76,7 +76,7 @@ function Badge({ children, tone = "blue" }: { children: string; tone?: "blue" | 
   return (
     <span
       className={clsx(
-        "border px-2 py-1 font-display text-[9px] uppercase tracking-[0.1em]",
+        "border px-2 py-1 font-display text-[9px] uppercase tracking-widest",
         toneClass,
       )}
     >
@@ -93,7 +93,7 @@ export function LaunchPcCard({ available, disabled, onLaunch }: LaunchPcCardProp
       disabled={disabled || !available}
       onClick={onLaunch}
     >
-      <div className="relative flex h-32 shrink-0 items-center justify-center overflow-hidden border-b border-[#354269] bg-[radial-gradient(circle_at_center,_rgba(68,214,255,0.26),_rgba(10,14,31,0.96)_68%)]">
+      <div className="relative flex h-32 shrink-0 items-center justify-center overflow-hidden border-b border-[#354269] bg-[radial-gradient(circle_at_center,rgba(68,214,255,0.26),rgba(10,14,31,0.96)_68%)]">
         <SpriteIcon icon="server" className="scale-[2.5]" />
         <div className="absolute inset-x-0 bottom-0 h-px bg-neon-cyan/50" />
       </div>
@@ -158,7 +158,7 @@ export function SoftwareLaunchCard({
       disabled={disabled || !item.launchable}
       onClick={onLaunch}
     >
-      <div className="relative h-32 shrink-0 overflow-hidden border-b border-[#354269] bg-[linear-gradient(135deg,_#111a38,_#1b2948_48%,_#0a0e1f)]">
+      <div className="relative h-32 shrink-0 overflow-hidden border-b border-[#354269] bg-[linear-gradient(135deg,#111a38,#1b2948_48%,#0a0e1f)]">
         {artwork?.imageUrl && !imageFailed ? (
           <img
             src={artwork.imageUrl}
@@ -175,7 +175,7 @@ export function SoftwareLaunchCard({
             )}
           </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#070b18]/75 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-linear-to-t from-[#070b18]/75 via-transparent to-transparent" />
       </div>
 
       <div className="flex flex-1 flex-col p-4">
@@ -204,7 +204,7 @@ export function SoftwareLaunchCard({
           <div className="flex items-start justify-between gap-3">
             <p
               className={clsx(
-                "break-words font-display text-[10px] uppercase tracking-[0.1em]",
+                "wrap-break-word font-display text-[10px] uppercase tracking-widest",
                 failed ? "text-red-300" : active ? "text-neon-cyan" : item.launchable ? "text-neon-lime" : "text-[#7890ae]",
               )}
             >
@@ -216,14 +216,14 @@ export function SoftwareLaunchCard({
           {active ? (
             <div className="mt-3 h-2 overflow-hidden border border-[#3f476c] bg-[#0b0f23]">
               {launching ? (
-                <div className="h-full w-2/5 animate-pulse bg-gradient-to-r from-[#1f3155] via-[#61f7ff] to-[#1f3155]" />
+                <div className="h-full w-2/5 animate-pulse bg-linear-to-r from-[#1f3155] via-[#61f7ff] to-[#1f3155]" />
               ) : (
                 <div
                   className={clsx(
                     "h-full transition-[width] duration-300",
                     failed
                       ? "bg-red-400"
-                      : "bg-gradient-to-r from-[#2d5844] via-[#61f7ff] to-[#7bff48]",
+                      : "bg-linear-to-r from-[#2d5844] via-[#61f7ff] to-[#7bff48]",
                   )}
                   style={{ width: `${progress}%` }}
                 />

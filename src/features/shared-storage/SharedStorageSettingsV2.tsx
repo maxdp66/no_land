@@ -241,13 +241,13 @@ All data is encrypted before upload and can only be decrypted with your reposito
           </div>
 
           {profiles.length > 1 && (
-            <div className="mb-6 rounded border border-[#3f476c] bg-[#0b0f23]/60 p-3">
+            <div className="mb-6 rounded-sm border border-[#3f476c] bg-[#0b0f23]/60 p-3">
               <p className="text-sm text-gray-200">Connected profiles</p>
               <div className="mt-3 space-y-2">
                 {profiles.map((profile) => (
                   <div
                     key={profile.id}
-                    className="flex items-center justify-between gap-3 rounded border border-[#3f476c] px-3 py-2"
+                    className="flex items-center justify-between gap-3 rounded-sm border border-[#3f476c] px-3 py-2"
                   >
                     <div>
                       <p className="text-sm text-gray-100">{profile.displayName}</p>
@@ -295,7 +295,7 @@ All data is encrypted before upload and can only be decrypted with your reposito
             </div>
           )}
 
-          <div className="mb-4 rounded border border-[#3f476c] bg-[#0b0f23]/60 p-3">
+          <div className="mb-4 rounded-sm border border-[#3f476c] bg-[#0b0f23]/60 p-3">
             <p className="text-sm text-gray-200">How to use shared storage</p>
             <p className="mt-1 text-xs text-gray-500">
               Whole-instance sync is no longer supported here. Use the dashboard actions to export or sync only the files and folders you explicitly choose for a running instance.
@@ -418,7 +418,7 @@ All data is encrypted before upload and can only be decrypted with your reposito
                   <label key={field.key} className="flex flex-col gap-2 text-base">
                     <span className="font-display text-[10px] uppercase tracking-[0.14em] text-[#9ad9ff]">{field.label}</span>
                     <select
-                      className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.1rem] text-[#dff8ff] outline-none shadow-[inset_0_0_0_2px_#121731] focus:border-neon-cyan"
+                      className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.1rem] text-[#dff8ff] outline-hidden shadow-[inset_0_0_0_2px_#121731] focus:border-neon-cyan"
                       value={formValues[field.key] || options[0]?.value || ""}
                       onChange={(e) => handleFieldChange(field.key, e.currentTarget.value)}
                       disabled={busy}
@@ -435,7 +435,7 @@ All data is encrypted before upload and can only be decrypted with your reposito
               }
               if (field.fieldType === "toggle") {
                 return (
-                  <label key={field.key} className="flex items-center justify-between rounded border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-sm text-[#dff8ff]">
+                  <label key={field.key} className="flex items-center justify-between rounded-sm border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-sm text-[#dff8ff]">
                     <span>{field.label}</span>
                     <input
                       type="checkbox"
@@ -543,7 +543,7 @@ All data is encrypted before upload and can only be decrypted with your reposito
                     <label key={field.key} className="flex flex-col gap-2 text-base">
                       <span className="font-display text-[10px] uppercase tracking-[0.14em] text-[#9ad9ff]">{field.label}</span>
                       <select
-                        className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.1rem] text-[#dff8ff] outline-none shadow-[inset_0_0_0_2px_#121731] focus:border-neon-cyan"
+                        className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.1rem] text-[#dff8ff] outline-hidden shadow-[inset_0_0_0_2px_#121731] focus:border-neon-cyan"
                         value={formValues[field.key] || options[0]?.value || ""}
                         onChange={(e) => handleFieldChange(field.key, e.currentTarget.value)}
                         disabled={busy}
@@ -575,11 +575,11 @@ All data is encrypted before upload and can only be decrypted with your reposito
 
           {oauthSessionId ? (
             <div className="space-y-4">
-              <div className="p-3 bg-yellow-900/30 border border-yellow-500/50 rounded text-yellow-300 text-sm">
+              <div className="p-3 bg-yellow-900/30 border border-yellow-500/50 rounded-sm text-yellow-300 text-sm">
                 Authorization in progress. Complete the sign-in in your browser, then click below.
               </div>
               {storeError && (
-                <div className="p-3 bg-red-900/30 border border-red-500/50 rounded text-red-300 text-sm space-y-2">
+                <div className="p-3 bg-red-900/30 border border-red-500/50 rounded-sm text-red-300 text-sm space-y-2">
                   <p>{storeError}</p>
                   {storeError.toLowerCase().includes("still in progress") ? (
                     <p className="text-red-200">

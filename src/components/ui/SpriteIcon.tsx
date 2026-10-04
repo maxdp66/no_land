@@ -88,7 +88,7 @@ export function SpriteIcon({ icon, className }: Props) {
 
   return (
     <div
-      className={clsx("sprite-icon grid h-6 w-6 grid-cols-6 gap-[1px] bg-[#0a0e1f] p-[1px]", className)}
+      className={clsx("sprite-icon grid h-6 w-6 grid-cols-6 gap-px bg-[#0a0e1f] p-px", className)}
       aria-hidden="true"
     >
       {sprite.map((colorIndex, index) => (

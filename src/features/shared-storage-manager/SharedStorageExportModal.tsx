@@ -103,7 +103,7 @@ export function SharedStorageExportModal({
     const isExpanded = expanded[entry.path] ?? depth < 1;
     return (
       <div key={`${entry.path}-${entry.isDir ? "dir" : "file"}`}>
-        <div className="flex items-center gap-2 rounded border border-[#30365d] bg-[#11162a] px-2 py-1" style={{ marginLeft: `${depth * 12}px` }}>
+        <div className="flex items-center gap-2 rounded-sm border border-[#30365d] bg-[#11162a] px-2 py-1" style={{ marginLeft: `${depth * 12}px` }}>
           {entry.isDir ? (
             <button type="button" className="w-5 text-left text-[#7ab6ff]" onClick={() => toggleExpanded(entry.path)}>
               {isExpanded ? "▾" : "▸"}
@@ -146,7 +146,7 @@ export function SharedStorageExportModal({
                 Backup performance
               </span>
               <select
-                className="h-10 border border-[#3f476c] bg-[#0b0f23] px-3 text-[1.15rem] text-[#dff8ff] outline-none focus:border-neon-cyan"
+                className="h-10 border border-[#3f476c] bg-[#0b0f23] px-3 text-[1.15rem] text-[#dff8ff] outline-hidden focus:border-neon-cyan"
                 value={performanceMode}
                 disabled={busy || loading}
                 onChange={(event) =>

@@ -608,7 +608,7 @@ export function DashboardScreen({
                   {systemHealth.probes.map((probe) => (
                     <div
                       key={probe.id}
-                      className={`rounded border p-3 ${healthStatusClass(probe.status)}`}
+                      className={`rounded-sm border p-3 ${healthStatusClass(probe.status)}`}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
@@ -703,7 +703,7 @@ export function DashboardScreen({
                         variant="ghost"
                         aria-label={`Upload files to ${instance.label}`}
                         title="Upload files and folders directly to this instance"
-                        className="h-8 w-8 rounded border border-[#3a4068] p-0 font-mono text-lg leading-none"
+                        className="h-8 w-8 rounded-sm border border-[#3a4068] p-0 font-mono text-lg leading-none"
                          disabled={busy || backgroundTransferRunning || !isActive}
                         onClick={() => setUploadInstanceId(instance.instanceId)}
                       >
@@ -713,7 +713,7 @@ export function DashboardScreen({
                         variant="ghost"
                         aria-label={`Open terminal for ${instance.label}`}
                         title="Open an SSH terminal for this instance"
-                        className="h-8 w-8 rounded border border-[#3a4068] p-0 font-mono text-lg leading-none"
+                        className="h-8 w-8 rounded-sm border border-[#3a4068] p-0 font-mono text-lg leading-none"
                          disabled={busy || !isActive}
                         onClick={() => setTerminalInstanceId(instance.instanceId)}
                       >
@@ -723,7 +723,7 @@ export function DashboardScreen({
                         variant="ghost"
                         aria-label={`Moonlight options for ${instance.label}`}
                         title="Moonlight stream options"
-                        className="h-8 w-8 rounded border border-[#3a4068] p-0"
+                        className="h-8 w-8 rounded-sm border border-[#3a4068] p-0"
                         disabled={busy}
                         onClick={() =>
                           setMoonlightOptionsInstanceId(instance.instanceId)
@@ -733,7 +733,7 @@ export function DashboardScreen({
                       </Button>
                     </div>
                   </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-[1rem] leading-[1.25] text-[#bfd3ee]">
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[1rem] leading-tight text-[#bfd3ee]">
                     <p>ID: {instance.instanceId}</p>
                     <p>Status: {instance.status}</p>
                     <p>GPU: {instance.gpuName}</p>
@@ -747,14 +747,14 @@ export function DashboardScreen({
                   )}
                   {instance.embeddedMoonlightPipelineEnabled && (
                     <div className="mt-2 space-y-2">
-                      <div className="rounded border border-neon-cyan/30 bg-neon-cyan/10 px-2 py-1 text-[11px] uppercase tracking-wide text-neon-cyan">
+                      <div className="rounded-sm border border-neon-cyan/30 bg-neon-cyan/10 px-2 py-1 text-[11px] uppercase tracking-wide text-neon-cyan">
                         Embedded Moonlight pipeline enabled
                       </div>
                       {(instance.embeddedMoonlightSessionState ||
                         instance.embeddedMoonlightLastRuntimeEvent ||
                         instance.embeddedMoonlightLastError ||
                         embeddedMoonlightStatus?.instanceId === instance.instanceId) && (
-                        <div className="rounded border border-[#3a4068] bg-[#10152f]/60 px-2 py-2 text-[11px] text-[#bfd3ee]">
+                        <div className="rounded-sm border border-[#3a4068] bg-[#10152f]/60 px-2 py-2 text-[11px] text-[#bfd3ee]">
                           <p>
                             Session: {instance.embeddedMoonlightSessionState ?? embeddedMoonlightStatus?.instanceId === instance.instanceId
                               ? instance.embeddedMoonlightSessionState ?? embeddedMoonlightStatus?.sessionState
@@ -864,7 +864,7 @@ export function DashboardScreen({
               <Card
                 interactive
                 onClick={openServerPicker}
-                className="flex items-center justify-center border-2 border-dashed border-[#3a4068] hover:border-neon-cyan hover:bg-[#10152f]/30 transition-colors min-h-[14rem] bg-[#10152f]/10"
+                className="flex items-center justify-center border-2 border-dashed border-[#3a4068] hover:border-neon-cyan hover:bg-[#10152f]/30 transition-colors min-h-56 bg-[#10152f]/10"
               >
                 <div className="text-[9rem] text-[#bfd3ee] font-bold transition-transform hover:scale-110 select-none leading-none">
                   +
@@ -891,7 +891,7 @@ export function DashboardScreen({
             </div>
 
             {appState.selectedOffer ? (
-              <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-[1.05rem] leading-[1.25] text-[#d9efff] md:grid-cols-4">
+              <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-[1.05rem] leading-tight text-[#d9efff] md:grid-cols-4">
                 <div>
                   <p className="font-display text-[10px] uppercase text-[#8db7d8]">
                     Host
@@ -1201,7 +1201,7 @@ export function DashboardScreen({
                 Noland manages the secure desktop connection flow for you inside the app.
               </p>
               <div>
-                <p className="mb-0.5 font-display text-[10px] uppercase tracking-[0.1em] text-neon-lime">
+                <p className="mb-0.5 font-display text-[10px] uppercase tracking-widest text-neon-lime">
                   How it works
                 </p>
                 <p className="text-[1.15rem] text-[#b9cce2]">
@@ -1209,7 +1209,7 @@ export function DashboardScreen({
                 </p>
               </div>
               <div>
-                <p className="mb-0.5 font-display text-[10px] uppercase tracking-[0.1em] text-neon-lime">
+                <p className="mb-0.5 font-display text-[10px] uppercase tracking-widest text-neon-lime">
                   Requirements
                 </p>
                 <p className="text-[1.15rem] text-[#b9cce2]">

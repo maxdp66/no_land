@@ -11,7 +11,7 @@ export function HudBar({ label, value, max = 1, valueLabel }: Props) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
-        <span className="font-display text-[10px] uppercase tracking-[0.1em] text-[#9ad9ff]">{label}</span>
+        <span className="font-display text-[10px] uppercase tracking-widest text-[#9ad9ff]">{label}</span>
         <span className="text-[1.1rem] leading-none text-[#d9efff]">{valueLabel ?? `${Math.round(ratio * 100)}%`}</span>
       </div>
       <div className="border border-[#3f476c] bg-[#0b0f23] p-[2px] shadow-[inset_0_0_0_1px_#121731]">

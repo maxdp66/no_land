@@ -140,7 +140,7 @@ export function ProvisioningScreen({
                 </div>
                 <div className="h-2 overflow-hidden border border-[#3f476c] bg-[#0b0f23] shadow-[inset_0_0_0_1px_#121731]">
                   <div
-                    className="h-full bg-gradient-to-r from-[#2d5844] via-[#61f7ff] to-[#7bff48] transition-[width] duration-300"
+                    className="h-full bg-linear-to-r from-[#2d5844] via-[#61f7ff] to-[#7bff48] transition-[width] duration-300"
                     style={{
                       width: `${Math.max(0, Math.min(100, blockingAction.progress ?? 0))}%`,
                     }}
@@ -172,7 +172,7 @@ export function ProvisioningScreen({
                           : "border-[#3d426f] bg-[#10152f]"
                     }`}
                   >
-                    <span className="font-display text-[16px] uppercase tracking-[0.1em] text-slate-100">
+                    <span className="font-display text-[16px] uppercase tracking-widest text-slate-100">
                       {step}
                     </span>
                   </li>

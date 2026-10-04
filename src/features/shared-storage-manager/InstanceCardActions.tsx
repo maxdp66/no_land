@@ -140,7 +140,7 @@ export function InstanceCardActions({
       </div>
 
       {showDestroyConfirm && (
-        <div className="text-xs text-red-300 bg-red-900/20 p-2 rounded border border-red-500/30">
+        <div className="text-xs text-red-300 bg-red-900/20 p-2 rounded-sm border border-red-500/30">
           This will permanently destroy instance {instance.instanceId}. A backup
           will run first if configured.
           <div className="mt-1 flex gap-2">

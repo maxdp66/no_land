@@ -208,7 +208,7 @@ function SelectField({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.2rem] leading-none text-[#dff8ff] outline-none transition focus:border-neon-cyan focus:shadow-[inset_0_0_0_2px_#121731,0_0_0_2px_rgba(68,214,255,0.28)]"
+        className="border border-[#3f476c] bg-[#0b0f23] px-3 py-2 text-[1.2rem] leading-none text-[#dff8ff] outline-hidden transition focus:border-neon-cyan focus:shadow-[inset_0_0_0_2px_#121731,0_0_0_2px_rgba(68,214,255,0.28)]"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -1298,7 +1298,7 @@ export function SettingsScreen({
               Adds an encrypted WireGuard relay path for networks where the direct UDP path is unavailable or unstable. The long-lived API token is stored only in your operating system secure credential store.
             </p>
           </div>
-          <span className="rounded border border-[#48527a] px-2 py-1 font-display text-[9px] uppercase tracking-[0.12em] text-[#b7d7f2]">
+          <span className="rounded-sm border border-[#48527a] px-2 py-1 font-display text-[9px] uppercase tracking-[0.12em] text-[#b7d7f2]">
             {cloudflareTurnSettings?.status ?? "loading"}
           </span>
         </div>
@@ -1393,7 +1393,7 @@ export function SettingsScreen({
               return (
                 <div
                   key={server.instanceId}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded border border-[#343b61] bg-[#0b1027] p-3"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-[#343b61] bg-[#0b1027] p-3"
                 >
                   <div>
                     <p className="font-display text-[9px] uppercase tracking-[0.12em] text-white">
@@ -1416,7 +1416,7 @@ export function SettingsScreen({
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <select
-                      className="min-w-52 rounded border border-[#48527a] bg-[#111936] px-3 py-2 text-[1rem] text-white"
+                      className="min-w-52 rounded-sm border border-[#48527a] bg-[#111936] px-3 py-2 text-[1rem] text-white"
                       value={network.preference}
                       disabled={busy || switchingInstanceId === server.instanceId || !status}
                       onChange={(event) =>

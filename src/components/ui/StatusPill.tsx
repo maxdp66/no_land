@@ -11,7 +11,7 @@ export function StatusPill({ state }: Props) {
         ? "border-[#8af75d] bg-[#243d21] text-[#c8ffad]"
         : state === "Inactive"
           ? "border-[#ffb86b] bg-[#4a2d1b] text-[#ffd3a3]"
-        : "border-[#44d6ff] bg-[#182a43] text-[#8deeff]";
+        : "border-neon-cyan bg-[#182a43] text-[#8deeff]";
 
   return (
     <span

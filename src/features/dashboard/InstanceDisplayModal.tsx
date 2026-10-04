@@ -124,7 +124,7 @@ export function InstanceDisplayModal({ instance, onClose }: Props) {
         {status ? (
           <>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded border border-[#283252] bg-[#0d132b] p-3">
+              <div className="rounded-sm border border-[#283252] bg-[#0d132b] p-3">
                 <p className="text-xs uppercase tracking-wider text-[#7890ae]">Client profile</p>
                 <p className="mt-1 font-medium">
                   {modeLabel(status.desiredProfile.preferredMode)}
@@ -133,7 +133,7 @@ export function InstanceDisplayModal({ instance, onClose }: Props) {
                   {status.desiredProfile.sourceLabel}
                 </p>
               </div>
-              <div className="rounded border border-[#283252] bg-[#0d132b] p-3">
+              <div className="rounded-sm border border-[#283252] bg-[#0d132b] p-3">
                 <p className="text-xs uppercase tracking-wider text-[#7890ae]">Remote state</p>
                 <p className="mt-1 font-medium">
                   {status.activeMode ? modeLabel(status.activeMode) : "No active mode detected"}
@@ -145,11 +145,11 @@ export function InstanceDisplayModal({ instance, onClose }: Props) {
             </div>
 
             {status.profileUpdateRequired ? (
-              <div className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm text-amber-100">
+              <div className="rounded-sm border border-amber-400/40 bg-amber-400/10 p-3 text-sm text-amber-100">
                 The VM is using a different EDID profile. Applying this setting will install your local display profile and briefly restart Xorg and Sunshine.
               </div>
             ) : (
-              <div className="rounded border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+              <div className="rounded-sm border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
                 The VM is already using this EDID profile. Switching to another listed resolution will apply instantly without a full restart.
               </div>
             )}
@@ -159,7 +159,7 @@ export function InstanceDisplayModal({ instance, onClose }: Props) {
                 Resolution advertised by this EDID
               </span>
               <select
-                className="w-full rounded border border-[#354269] bg-[#080d1f] px-3 py-3 text-white outline-none focus:border-neon-cyan"
+                className="w-full rounded-sm border border-[#354269] bg-[#080d1f] px-3 py-3 text-white outline-hidden focus:border-neon-cyan"
                 value={selectedKey}
                 disabled={applying}
                 onChange={(event) => setSelectedKey(event.target.value)}
@@ -192,12 +192,12 @@ export function InstanceDisplayModal({ instance, onClose }: Props) {
         ) : null}
 
         {resultMessage ? (
-          <div className="rounded border border-neon-lime/30 bg-neon-lime/10 p-3 text-sm text-neon-lime">
+          <div className="rounded-sm border border-neon-lime/30 bg-neon-lime/10 p-3 text-sm text-neon-lime">
             {resultMessage}
           </div>
         ) : null}
         {error ? (
-          <div className="rounded border border-red-400/40 bg-red-500/10 p-3 text-sm text-red-200">
+          <div className="rounded-sm border border-red-400/40 bg-red-500/10 p-3 text-sm text-red-200">
             {error}
           </div>
         ) : null}

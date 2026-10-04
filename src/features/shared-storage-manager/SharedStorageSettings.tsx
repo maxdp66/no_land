@@ -149,13 +149,13 @@ export function SharedStorageSettings({
         </div>
 
         {testResult && (
-          <div className="mt-4 p-3 bg-green-900/30 border border-green-500/50 rounded text-green-300 text-sm">
+          <div className="mt-4 p-3 bg-green-900/30 border border-green-500/50 rounded-sm text-green-300 text-sm">
             {testResult}
           </div>
         )}
 
         {testError && (
-          <div className="mt-4 p-3 bg-red-900/30 border border-red-500/50 rounded text-red-300 text-sm">
+          <div className="mt-4 p-3 bg-red-900/30 border border-red-500/50 rounded-sm text-red-300 text-sm">
             {testError}
           </div>
         )}

@@ -350,7 +350,7 @@ export function StreamWindowScreen() {
       <div className="pointer-events-none absolute inset-0 select-none">
         {showHud ? (
           <div className="absolute inset-x-0 top-0 flex justify-center p-4">
-            <div className="rounded border border-cyan-300/70 bg-slate-950/70 px-4 py-2 font-mono text-sm shadow-[0_0_18px_rgba(34,211,238,0.25)] backdrop-blur-sm">
+            <div className="rounded-sm border border-cyan-300/70 bg-slate-950/70 px-4 py-2 font-mono text-sm shadow-[0_0_18px_rgba(34,211,238,0.25)] backdrop-blur-xs">
               {captureHint}
             </div>
           </div>
@@ -358,7 +358,7 @@ export function StreamWindowScreen() {
 
         {networkWarning ? (
           <div className="absolute inset-x-0 top-20 flex justify-center px-4">
-            <div className="max-w-lg rounded border border-amber-300/80 bg-amber-950/90 px-5 py-4 font-mono text-amber-50 shadow-[0_0_24px_rgba(251,191,36,0.3)] backdrop-blur-sm">
+            <div className="max-w-lg rounded-sm border border-amber-300/80 bg-amber-950/90 px-5 py-4 font-mono text-amber-50 shadow-[0_0_24px_rgba(251,191,36,0.3)] backdrop-blur-xs">
               <div className="text-sm font-semibold uppercase tracking-[0.12em]">
                 ⚠ Connection unstable
               </div>
@@ -384,7 +384,7 @@ export function StreamWindowScreen() {
               type="button"
               onClick={() => void handleClipboard("send")}
               disabled={clipboardBusy !== null || disconnecting}
-              className="rounded border border-violet-300/70 bg-slate-950/80 px-4 py-2 font-mono text-sm text-violet-100 shadow-[0_0_18px_rgba(196,181,253,0.18)] backdrop-blur-sm transition hover:bg-slate-900/90 disabled:cursor-wait disabled:opacity-70"
+              className="rounded-sm border border-violet-300/70 bg-slate-950/80 px-4 py-2 font-mono text-sm text-violet-100 shadow-[0_0_18px_rgba(196,181,253,0.18)] backdrop-blur-xs transition hover:bg-slate-900/90 disabled:cursor-wait disabled:opacity-70"
             >
               {clipboardBusy === "send" ? "Sending…" : "Send clipboard to remote"}
             </button>
@@ -392,14 +392,14 @@ export function StreamWindowScreen() {
               type="button"
               onClick={() => void handleClipboard("get")}
               disabled={clipboardBusy !== null || disconnecting}
-              className="rounded border border-violet-300/70 bg-slate-950/80 px-4 py-2 font-mono text-sm text-violet-100 shadow-[0_0_18px_rgba(196,181,253,0.18)] backdrop-blur-sm transition hover:bg-slate-900/90 disabled:cursor-wait disabled:opacity-70"
+              className="rounded-sm border border-violet-300/70 bg-slate-950/80 px-4 py-2 font-mono text-sm text-violet-100 shadow-[0_0_18px_rgba(196,181,253,0.18)] backdrop-blur-xs transition hover:bg-slate-900/90 disabled:cursor-wait disabled:opacity-70"
             >
               {clipboardBusy === "get" ? "Getting…" : "Get clipboard from remote"}
             </button>
             <button
               type="button"
               onClick={() => setShowHud((value) => !value)}
-              className="rounded border border-cyan-300/70 bg-slate-950/80 px-4 py-2 font-mono text-sm text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.18)] backdrop-blur-sm transition hover:bg-slate-900/90"
+              className="rounded-sm border border-cyan-300/70 bg-slate-950/80 px-4 py-2 font-mono text-sm text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.18)] backdrop-blur-xs transition hover:bg-slate-900/90"
             >
               {showHud ? "Hide HUD" : "Show HUD"}
             </button>
@@ -409,25 +409,25 @@ export function StreamWindowScreen() {
                 void handleDisconnectStream();
               }}
               disabled={disconnecting}
-              className="rounded border border-amber-300/70 bg-slate-950/80 px-4 py-2 font-mono text-sm text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.18)] backdrop-blur-sm transition hover:bg-slate-900/90 disabled:cursor-wait disabled:opacity-70"
+              className="rounded-sm border border-amber-300/70 bg-slate-950/80 px-4 py-2 font-mono text-sm text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.18)] backdrop-blur-xs transition hover:bg-slate-900/90 disabled:cursor-wait disabled:opacity-70"
             >
               {disconnecting ? "Ending stream…" : "End stream"}
             </button>
           </div>
           {disconnectError ? (
-            <div className="max-w-md rounded border border-red-400/70 bg-red-950/80 px-3 py-2 font-mono text-xs text-red-100 shadow-[0_0_18px_rgba(248,113,113,0.18)] backdrop-blur-sm">
+            <div className="max-w-md rounded-sm border border-red-400/70 bg-red-950/80 px-3 py-2 font-mono text-xs text-red-100 shadow-[0_0_18px_rgba(248,113,113,0.18)] backdrop-blur-xs">
               {disconnectError}
             </div>
           ) : null}
           {clipboardStatus ? (
-            <div className="max-w-md rounded border border-violet-300/70 bg-slate-950/80 px-3 py-2 font-mono text-xs text-violet-100 shadow-[0_0_18px_rgba(196,181,253,0.18)] backdrop-blur-sm">
+            <div className="max-w-md rounded-sm border border-violet-300/70 bg-slate-950/80 px-3 py-2 font-mono text-xs text-violet-100 shadow-[0_0_18px_rgba(196,181,253,0.18)] backdrop-blur-xs">
               {clipboardStatus}
             </div>
           ) : null}
         </div>
 
         {showHud && latencyStats && (latencyStats.frameTimingRingCount > 0 || latencyStats.adaptivePacketSizeEnabled) ? (
-          <div className="absolute bottom-4 left-4 max-w-md rounded border border-emerald-400/60 bg-slate-950/70 px-3 py-2 font-mono text-[11px] leading-5 text-emerald-50 shadow-[0_0_18px_rgba(52,211,153,0.18)] backdrop-blur-sm">
+          <div className="absolute bottom-4 left-4 max-w-md rounded-sm border border-emerald-400/60 bg-slate-950/70 px-3 py-2 font-mono text-[11px] leading-5 text-emerald-50 shadow-[0_0_18px_rgba(52,211,153,0.18)] backdrop-blur-xs">
             <div>
               render {(latencyStats.renderedFpsX100 / 100).toFixed(1)} FPS · stream {latencyStats.streamFps} FPS · display {(latencyStats.clientRefreshRateX100 / 100).toFixed(2)} Hz
             </div>
@@ -464,7 +464,7 @@ export function StreamWindowScreen() {
         ) : null}
 
         {showHud ? (
-          <div className="absolute bottom-4 right-4 max-w-lg rounded border border-slate-700/80 bg-slate-950/65 px-3 py-2 font-mono text-xs text-slate-100 shadow-[0_0_18px_rgba(15,23,42,0.35)] backdrop-blur-sm">
+          <div className="absolute bottom-4 right-4 max-w-lg rounded-sm border border-slate-700/80 bg-slate-950/65 px-3 py-2 font-mono text-xs text-slate-100 shadow-[0_0_18px_rgba(15,23,42,0.35)] backdrop-blur-xs">
             <div>{detail}</div>
             <div className="mt-1 text-slate-300">
               Input capture should begin automatically when the stream window opens
