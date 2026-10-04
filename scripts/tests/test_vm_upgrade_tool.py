@@ -56,8 +56,31 @@ repair_packages
         lines = result.stdout.splitlines()
         self.assertIn('-s --fix-broken --allow-downgrades --no-remove install', lines[0])
         self.assertIn('-y --fix-broken --allow-downgrades --no-remove install', lines[1])
-        for package in ("libspa-0.2-bluetooth", "libspa-0.2-jack", "plasma-workspace", "pipewire-pulse"):
+        for package in ("libspa-0.2-bluetooth", "libspa-0.2-jack", "pipewire-alsa", "pipewire-pulse"):
             self.assertIn(f"{package}=1.0.5", lines[1])
+        desktop_simulation = next(line for line in lines if "-s " in line and "plasma-workspace=" in line)
+        desktop_install = next(line for line in lines if "-y " in line and "plasma-workspace=" in line)
+        self.assertGreater(lines.index(desktop_simulation), lines.index(lines[1]))
+        for package in ("qml-module-org-kde-pipewire", "libkpipewire5", "libkpipewiredmabuf5", "libkpipewirerecord5"):
+            self.assertIn(f"{package}=1.0.5", desktop_install)
+        self.assertNotIn("plasma-workspace=", lines[1])
+
+    def test_desktop_solver_failure_does_not_block_library_repair_or_install_kde(self):
+        result = bash("""
+noble_version() { echo 1.0.5; }
+dpkg-query() { echo 'install ok installed'; }
+dpkg() { :; }
+apt_run() {
+  printf 'APT %s\\n' "$*"
+  if [[ "$*" == *plasma-workspace* && "$*" == -s* ]]; then return 100; fi
+}
+repair_packages
+""")
+        self.assertEqual(result.returncode, 100)
+        installs = [line for line in result.stdout.splitlines() if line.startswith('APT -y')]
+        self.assertEqual(len(installs), 1)
+        self.assertIn('libpipewire-0.3-0t64=', installs[0])
+        self.assertNotIn('plasma-workspace=', installs[0])
 
     def test_failed_simulation_prevents_real_install(self):
         result = bash('''

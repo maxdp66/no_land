@@ -64,8 +64,8 @@ repair_packages() {
   local package version
   local packages=(libspa-0.2-modules libpipewire-0.3-0t64 libpipewire-0.3-modules
     pipewire-bin pipewire pipewire-pulse libwireplumber-0.4-0 wireplumber
-    libroc0.3 xdg-desktop-portal plasma-workspace plasma-desktop kwin-x11)
-  for package in libspa-0.2-bluetooth libspa-0.2-jack libpipewire-0.3-common; do
+    libroc0.3 xdg-desktop-portal)
+  for package in libspa-0.2-bluetooth libspa-0.2-jack libpipewire-0.3-common pipewire-alsa libpipewire-0.3-dev libspa-0.2-dev; do
     if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
       packages+=("$package")
     fi
@@ -85,6 +85,19 @@ repair_packages() {
   apt_run -s --fix-broken --allow-downgrades --no-remove install "${pinned[@]}"
   apt_run -y --fix-broken --allow-downgrades --no-remove install "${pinned[@]}"
   dpkg --configure -a
+  apt_run check
+  # Fix the audio/library dependency graph first. Combining missing KDE with
+  # broken old PipeWire packages prevents APT from resolving KDE's new QML deps.
+  log 'Streaming libraries repaired; restoring the KDE X11 desktop.'
+  local desktop=(plasma-workspace plasma-desktop kwin-x11
+    qml-module-org-kde-pipewire libkpipewire5 libkpipewiredmabuf5 libkpipewirerecord5)
+  pinned=()
+  for package in "${desktop[@]}"; do
+    version=$(noble_version "$package")
+    pinned+=("$package=$version")
+  done
+  apt_run -s --fix-broken --allow-downgrades --no-remove install "${pinned[@]}"
+  apt_run -y --fix-broken --allow-downgrades --no-remove install "${pinned[@]}"
   apt_run check
   test -x /usr/bin/startplasma-x11
 }
