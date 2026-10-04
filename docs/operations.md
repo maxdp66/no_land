@@ -296,3 +296,23 @@ Offline regression checks (no VM changes):
 ```bash
 python3 scripts/tests/test_vm_upgrade_tool.py
 ```
+
+### Desktop resolution tool
+
+`Desktop/tools/Change Display Resolution.desktop` opens a terminal menu of the
+connected outputs' advertised resolutions and refresh rates. The matching shell
+wrapper is `change-display-resolution.sh`; `--list` only lists modes. Run as the
+streaming desktop user, without sudo. No custom modelines or administrator access
+are needed.
+
+The selection must be confirmed within 15 seconds. A detached watchdog restores
+the previous mode after 20 seconds if the terminal closes or the change is left
+unconfirmed. Changes affect the active X11 session; rebooting or applying a
+No Land display profile can override them. Reconnect Play if the stream needs to
+renegotiate its video settings. This helper does not change audio controls.
+
+Offline display-tool regression checks:
+
+```bash
+python3 scripts/tests/test_display_resolution_tool.py
+```
