@@ -3168,8 +3168,8 @@ async fn ensure_post_nvidia_reboot(
 /// NVIDIA setup is skipped once an instance is provisioned, so an `apt
 /// upgrade` that swaps the driver libraries afterwards would go unnoticed:
 /// Sunshine still answers health checks while capture shows a black screen.
-/// Re-check the driver on every connect, reboot on a kernel/userspace
-/// mismatch, and re-apply the package holds that prevent it next time.
+/// Re-check the driver on every connect and reboot on a kernel/userspace
+/// mismatch so the new driver loads.
 async fn recheck_nvidia_driver(
     app: &AppHandle,
     context: &AppContext,
@@ -3218,10 +3218,6 @@ async fn recheck_nvidia_driver(
                 "NVIDIA driver re-check failed on a provisioned instance; continuing"
             );
         }
-    }
-
-    if let Err(error) = nvidia.hold_driver_and_kernel_packages(remote).await {
-        warn!("Could not hold NVIDIA driver and kernel packages: {error}");
     }
 
     Ok(())
