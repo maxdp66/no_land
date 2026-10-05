@@ -68,13 +68,18 @@ jobs:
         id: version
         shell: bash
         run: |
-          latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)
+          # Only plain vX.Y.Z tags count; a tag like v0.1.1a would otherwise break the patch bump.
+          latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
           configured_version=$(node -p "require('./src-tauri/tauri.conf.json').version")
           latest_version="${latest_tag#v}"
           if [[ -z "$latest_version" ]] || [[ "$(printf '%s\n%s\n' "$latest_version" "$configured_version" | sort -V | tail -n 1)" == "$configured_version" ]]; then
             version="$configured_version"
           else
             version="$latest_version"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Cannot derive the next release version from '$version'." >&2
+            exit 1
           fi
           IFS='.' read -r major minor patch <<< "$version"
           next_tag="v${major}.${minor}.$((patch + 1))"
