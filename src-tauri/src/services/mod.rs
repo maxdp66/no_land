@@ -39,6 +39,7 @@ pub mod spend_tracker;
 pub mod ssh_keys;
 pub mod state_store;
 pub mod sunshine;
+pub mod shadeform_api;
 pub mod tensordock_api;
 pub mod vast_api;
 pub mod vm_agents;

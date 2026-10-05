@@ -2009,10 +2009,16 @@ fn offer_matches_server_preferences(
     let static_ip_ok = !preferences.require_static_ip || offer.has_static_ip;
     let avx_ok = !preferences.require_avx || offer.has_avx;
     let gpu_count_ok = offer.gpu_count == 1;
-    let gpu_ram_ok = (offer.gpu_ram_mb as f64 / 1024.0) >= preferences.min_gpu_ram_gb as f64;
+    // Only Vast reports bandwidth, and other providers' VRAM is inferred from
+    // the model name, so a zero from them means "unknown", not "none".
+    let unknown = |value: f64| value <= 0.0 && !offer_reports_full_specs(offer);
+    let gpu_ram_ok = unknown(offer.gpu_ram_mb as f64)
+        || (offer.gpu_ram_mb as f64 / 1024.0) >= preferences.min_gpu_ram_gb as f64;
     let cpu_cores_ok = offer.cpu_cores >= preferences.min_cpu_cores;
-    let down_ok = offer.internet_down_mbps >= preferences.min_inet_down_mbps;
-    let up_ok = offer.internet_up_mbps >= preferences.min_inet_up_mbps;
+    let down_ok = unknown(offer.internet_down_mbps)
+        || offer.internet_down_mbps >= preferences.min_inet_down_mbps;
+    let up_ok =
+        unknown(offer.internet_up_mbps) || offer.internet_up_mbps >= preferences.min_inet_up_mbps;
 
     price_ok
         && verified_ok
@@ -2025,6 +2031,13 @@ fn offer_matches_server_preferences(
         && cpu_cores_ok
         && down_ok
         && up_ok
+}
+
+fn offer_reports_full_specs(offer: &OfferCandidate) -> bool {
+    matches!(
+        crate::models::provider::CloudProviderKind::parse(&offer.provider),
+        Some(crate::models::provider::CloudProviderKind::Vast)
+    )
 }
 
 #[tauri::command]
@@ -2868,6 +2881,44 @@ pub async fn update_tensordock_api_key(
     let next_state = context
         .update_state(|state| {
             state.credentials.tensordock_api_key = trimmed;
+            state.last_error = None;
+        })
+        .await?;
+
+    Ok(next_state)
+}
+
+/// Save (or clear, with an empty string) the Shadeform API key.
+#[tauri::command]
+pub async fn update_shadeform_api_key(
+    api_key: String,
+    context: State<'_, AppContext>,
+) -> Result<PersistedAppState, FrontendError> {
+    let trimmed = api_key.trim().to_string();
+    if !trimmed.is_empty() {
+        if trimmed.len() < 16 {
+            return Err(
+                AppError::InvalidInput("Shadeform API key looks invalid".to_string()).into(),
+            );
+        }
+        crate::services::shadeform_api::ShadeformApiClient::new(
+            context.http_client.clone(),
+            context.config.shadeform_base_url.clone(),
+            trimmed.clone(),
+        )
+        .check_credentials()
+        .await
+        .map_err(|error| match error {
+            AppError::Authentication => {
+                AppError::InvalidInput("Shadeform rejected this API key".to_string())
+            }
+            other => other,
+        })?;
+    }
+
+    let next_state = context
+        .update_state(|state| {
+            state.credentials.shadeform_api_key = trimmed;
             state.last_error = None;
         })
         .await?;
@@ -5901,4 +5952,48 @@ pub async fn refresh_state_agent_index(
     call_agent_raw(&remote, "RefreshIndex", serde_json::json!({}))
         .await
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod offer_filter_tests {
+    use super::{offer_matches_server_preferences, OfferCandidate, ServerPreferences};
+
+    fn offer(provider: &str, gpu_ram_mb: u64, down_mbps: f64) -> OfferCandidate {
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "hostId": null, "hostLabel": "", "locationLabel": "", "city": "",
+            "region": "", "country": "US", "latitude": 0.0, "longitude": 0.0,
+            "reliability": 0.99, "gpuName": "RTX A6000", "gpuRamMb": gpu_ram_mb, "gpuCount": 1,
+            "cpuCores": 8.0, "internetDownMbps": down_mbps, "internetUpMbps": down_mbps,
+            "hourlyPrice": 0.5, "availableStorageGb": 100, "estimatedDistanceKm": 0.0,
+            "score": 0.0, "offerType": "on-demand", "provider": provider
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn unknown_specs_only_pass_for_providers_that_do_not_report_them() {
+        let preferences = ServerPreferences {
+            min_inet_down_mbps: 500.0,
+            min_inet_up_mbps: 200.0,
+            min_gpu_ram_gb: 16,
+            ..ServerPreferences::default()
+        };
+        let cases = [
+            ("tensordock", 0, 0.0, true),
+            ("shadeform", 49152, 0.0, true),
+            ("vast", 49152, 0.0, false),
+            ("shadeform", 8192, 0.0, false),
+            ("vast", 49152, 900.0, true),
+        ];
+        for (provider, gpu_ram_mb, down_mbps, expected) in cases {
+            assert_eq!(
+                offer_matches_server_preferences(
+                    &offer(provider, gpu_ram_mb, down_mbps),
+                    &preferences
+                ),
+                expected,
+                "{provider} {gpu_ram_mb} {down_mbps}"
+            );
+        }
+    }
 }

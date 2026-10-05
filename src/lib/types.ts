@@ -281,6 +281,7 @@ export interface CredentialsState {
   twitchClientId: string;
   twitchClientSecret: string;
   tensordockApiKey?: string;
+  shadeformApiKey?: string;
 }
 
 export interface SshState {
@@ -357,7 +358,7 @@ export interface OfferCandidate {
   offerType: string;
   hasStaticIp: boolean;
   hasAvx: boolean;
-  /** GPU provider: "vast" or "tensordock". */
+  /** GPU provider: "vast", "tensordock" or "shadeform". */
   provider?: string;
   providerOfferRef?: string;
   observedQuality?: ObservedQuality | null;

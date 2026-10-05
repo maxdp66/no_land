@@ -141,6 +141,8 @@ pub struct CredentialsState {
     pub twitch_client_secret: String,
     #[serde(default)]
     pub tensordock_api_key: String,
+    #[serde(default)]
+    pub shadeform_api_key: String,
 }
 
 impl Default for CredentialsState {
@@ -152,6 +154,7 @@ impl Default for CredentialsState {
             twitch_client_id: String::new(),
             twitch_client_secret: String::new(),
             tensordock_api_key: String::new(),
+            shadeform_api_key: String::new(),
         }
     }
 }

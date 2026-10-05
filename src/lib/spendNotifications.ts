@@ -4,6 +4,7 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { isNotificationEnabled } from "./notificationPreferences";
+import { providerDisplayName } from "./providers";
 import type { PriceAlertMatch, SpendAlert } from "./types";
 
 export function spendAlertTitle(alert: SpendAlert): string {
@@ -56,7 +57,7 @@ export async function notifyPriceAlert(match: PriceAlertMatch): Promise<void> {
     if (!granted) {
       return;
     }
-    const provider = match.provider === "tensordock" ? "TensorDock" : "Vast.ai";
+    const provider = providerDisplayName(match.provider);
     await sendNotification({
       title: `No Land — ${match.gpuName} at $${match.hourlyPrice.toFixed(2)}/hr`,
       body: `${provider} · ${match.locationLabel || "unknown location"} is at or below your $${match.maxHourlyUsd.toFixed(2)}/hr target. Open No Land to rent it.`,

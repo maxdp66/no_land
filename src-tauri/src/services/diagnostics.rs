@@ -230,6 +230,10 @@ pub async fn write_diagnostic_report(
         !state.credentials.tensordock_api_key.trim().is_empty()
     ));
     body.push_str(&format!(
+        "- Shadeform credentials configured: `{}`\n",
+        !state.credentials.shadeform_api_key.trim().is_empty()
+    ));
+    body.push_str(&format!(
         "- Orchestration state: `{:?}`\n",
         state.orchestration_state
     ));

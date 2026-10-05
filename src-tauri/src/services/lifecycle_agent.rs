@@ -33,7 +33,7 @@ const SYSTEMD_UNIT: &str =
     include_str!("../../../state-agent/systemd/noland-lifecycle-agent.service");
 
 const AGENT_VERSION: &str = "0.1.0";
-const DEPLOYMENT_REVISION: &str = "15";
+const DEPLOYMENT_REVISION: &str = "16";
 const AGENT_BINARY: &str = "/usr/local/bin/noland-lifecycle-agent";
 const AGENT_SERVICE: &str = "noland-lifecycle-agent.service";
 const REVISION_PATH: &str = "/usr/local/share/noland-lifecycle-agent/install-revision";
@@ -321,6 +321,12 @@ fn lifecycle_provider_target(
             "tensordock",
             context.config.tensordock_base_url.clone(),
             state.credentials.tensordock_api_key.clone(),
+            resolved.remote_id,
+        ),
+        CloudProviderKind::Shadeform => (
+            "shadeform",
+            context.config.shadeform_base_url.clone(),
+            state.credentials.shadeform_api_key.clone(),
             resolved.remote_id,
         ),
     };

@@ -350,8 +350,8 @@ fn country_matches(country: &str, code: &str) -> bool {
     country.eq_ignore_ascii_case(code) || country_code_for(country).eq_ignore_ascii_case(code)
 }
 
-/// ISO 3166 alpha-2 code for the country names TensorDock commonly reports.
-fn country_code_for(country: &str) -> &'static str {
+/// ISO 3166 alpha-2 code for the country names GPU providers commonly report.
+pub(crate) fn country_code_for(country: &str) -> &'static str {
     match country.trim().to_ascii_lowercase().as_str() {
         "united states" | "united states of america" | "usa" | "us" => "US",
         "canada" | "ca" => "CA",
@@ -371,6 +371,44 @@ fn country_code_for(country: &str) -> &'static str {
         "australia" | "au" => "AU",
         "india" | "in" => "IN",
         "brazil" | "br" => "BR",
+        "ireland" | "ie" => "IE",
+        "switzerland" | "ch" => "CH",
+        "belgium" | "be" => "BE",
+        "austria" | "at" => "AT",
+        "denmark" | "dk" => "DK",
+        "portugal" | "pt" => "PT",
+        "iceland" | "is" => "IS",
+        "estonia" | "ee" => "EE",
+        "latvia" | "lv" => "LV",
+        "lithuania" | "lt" => "LT",
+        "romania" | "ro" => "RO",
+        "bulgaria" | "bg" => "BG",
+        "hungary" | "hu" => "HU",
+        "slovakia" | "sk" => "SK",
+        "slovenia" | "si" => "SI",
+        "croatia" | "hr" => "HR",
+        "serbia" | "rs" => "RS",
+        "greece" | "gr" => "GR",
+        "luxembourg" | "lu" => "LU",
+        "ukraine" | "ua" => "UA",
+        "moldova" | "md" => "MD",
+        "turkey" | "türkiye" | "turkiye" | "tr" => "TR",
+        "israel" | "il" => "IL",
+        "united arab emirates" | "uae" | "ae" => "AE",
+        "south africa" | "za" => "ZA",
+        "mexico" | "mx" => "MX",
+        "chile" | "cl" => "CL",
+        "argentina" | "ar" => "AR",
+        "colombia" | "co" => "CO",
+        "south korea" | "korea" | "republic of korea" | "kr" => "KR",
+        "taiwan" | "tw" => "TW",
+        "hong kong" | "hk" => "HK",
+        "thailand" | "th" => "TH",
+        "malaysia" | "my" => "MY",
+        "indonesia" | "id" => "ID",
+        "vietnam" | "viet nam" | "vn" => "VN",
+        "philippines" | "ph" => "PH",
+        "new zealand" | "nz" => "NZ",
         _ => "",
     }
 }
@@ -439,6 +477,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
         .unwrap_or_default();
 
     let mut offers = Vec::new();
+    let mut skipped = SkipCounts::default();
     for location in &locations {
         let location_id = get_any(location, &["id", "uuid", "location_id"])
             .and_then(value_as_string)
@@ -448,13 +487,32 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
         }
         let city = string_any(location, &["city"]);
         let region = string_any(location, &["stateprovince", "state", "region"]);
-        let country = string_any(location, &["country"]);
+        let country_name = string_any(location, &["country"]);
+        // The server picker groups offers by ISO code, like Vast reports them.
+        let country = match country_code_for(&country_name) {
+            "" => country_name.clone(),
+            code => code.to_string(),
+        };
         let tier = number_any(location, &["tier"]).unwrap_or_default();
 
         for (gpu_v0_name, gpu) in gpu_entries(location.get("gpus")) {
-            let available = number_any(&gpu, &["max_count", "maxCount", "available", "count"])
-                .unwrap_or(1.0);
-            if available < 1.0 {
+            skipped.gpus_seen += 1;
+            let sold_out = bool_any(&gpu, &["available", "isAvailable", "is_available"])
+                == Some(false)
+                || number_any(
+                    &gpu,
+                    &[
+                        "max_count",
+                        "maxCount",
+                        "available_count",
+                        "availableCount",
+                        "available",
+                        "count",
+                    ],
+                )
+                .is_some_and(|count| count < 1.0);
+            if sold_out {
+                skipped.sold_out += 1;
                 continue;
             }
             let network = gpu
@@ -466,6 +524,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
             {
                 // Without a dedicated IP, inbound UDP for streaming is not
                 // guaranteed, so these offers are not usable.
+                skipped.no_dedicated_ip += 1;
                 continue;
             }
             let resources = gpu.get("resources").cloned().unwrap_or(Value::Null);
@@ -475,19 +534,39 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
             let max_storage =
                 number_any(&resources, &["max_storage_gb", "maxStorageGb"]).unwrap_or(f64::MAX);
             if max_storage < f64::from(storage_gb) {
+                skipped.storage += 1;
                 continue;
             }
             let vcpu_count = (f64::from(DEFAULT_VCPUS).min(max_vcpus).floor() as u32).max(2);
             let ram_gb = (f64::from(DEFAULT_RAM_GB).min(max_ram).floor() as u32).max(8);
 
-            let gpu_hourly = number_any(&gpu, &["price_per_hr", "pricePerHr", "price"]).unwrap_or(0.0);
+            let gpu_hourly = number_any(
+                &gpu,
+                &[
+                    "price_per_hr",
+                    "pricePerHr",
+                    "price_per_hour",
+                    "pricePerHour",
+                    "hourly_price",
+                    "price",
+                ],
+            )
+            .or_else(|| {
+                number_any(
+                    &pricing,
+                    &["per_gpu_hr", "perGpuHr", "price_per_hr", "pricePerHr"],
+                )
+            })
+            .unwrap_or(0.0);
             let per_vcpu = number_any(&pricing, &["per_vcpu_hr", "perVcpuHr"]).unwrap_or(0.0);
             let per_ram = number_any(&pricing, &["per_gb_ram_hr", "perGbRamHr"]).unwrap_or(0.0);
             let per_storage =
                 number_any(&pricing, &["per_gb_storage_hr", "perGbStorageHr"]).unwrap_or(0.0);
-            let compute = gpu_hourly + per_vcpu * f64::from(vcpu_count) + per_ram * f64::from(ram_gb);
+            let compute =
+                gpu_hourly + per_vcpu * f64::from(vcpu_count) + per_ram * f64::from(ram_gb);
             let storage = per_storage * f64::from(storage_gb);
             if compute <= 0.0 {
+                skipped.no_price += 1;
                 continue;
             }
 
@@ -506,7 +585,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                     .trim_start_matches("GeForce ")
                     .to_string()
             };
-            let host_label = [city.as_str(), region.as_str(), country.as_str()]
+            let host_label = [city.as_str(), region.as_str(), country_name.as_str()]
                 .iter()
                 .filter(|part| !part.is_empty())
                 .copied()
@@ -559,7 +638,59 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
             });
         }
     }
+    let message = format!(
+        "TensorDock locations: {} location(s), {} GPU type(s), {} offer(s); skipped {} sold out, {} without a dedicated IP, {} below {storage_gb} GB storage, {} without a price",
+        locations.len(),
+        skipped.gpus_seen,
+        offers.len(),
+        skipped.sold_out,
+        skipped.no_dedicated_ip,
+        skipped.storage,
+        skipped.no_price,
+    );
+    if offers.is_empty() {
+        // Log the response shape (keys only, never values) so a mismatch with
+        // the live API is visible in diagnostics.
+        warn!("{message}; response shape: {}", json_shape(body, 3));
+    } else {
+        info!("{message}");
+    }
     offers
+}
+
+#[derive(Default)]
+struct SkipCounts {
+    gpus_seen: usize,
+    sold_out: usize,
+    no_dedicated_ip: usize,
+    storage: usize,
+    no_price: usize,
+}
+
+/// Keys and value types of a JSON document down to `depth`, with arrays
+/// summarized by their first element. Contains no values.
+pub(crate) fn json_shape(value: &Value, depth: usize) -> String {
+    match value {
+        Value::Object(map) if depth > 0 => format!(
+            "{{{}}}",
+            map.iter()
+                .take(24)
+                .map(|(key, item)| format!("{key}: {}", json_shape(item, depth - 1)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(_) => "{..}".to_string(),
+        Value::Array(items) => match items.first() {
+            Some(first) if depth > 0 => {
+                format!("[{} x {}]", items.len(), json_shape(first, depth - 1))
+            }
+            _ => format!("[{}]", items.len()),
+        },
+        Value::String(_) => "string".to_string(),
+        Value::Number(_) => "number".to_string(),
+        Value::Bool(_) => "bool".to_string(),
+        Value::Null => "null".to_string(),
+    }
 }
 
 fn normalize_status(raw: &str) -> String {
@@ -759,7 +890,12 @@ mod tests {
         assert_eq!(rtx.provider, "tensordock");
         assert_eq!(rtx.gpu_name, "RTX 4090 PCIe 24GB");
         assert_eq!(rtx.gpu_ram_mb, 24 * 1024);
-        assert_eq!(rtx.country, "United States");
+        assert_eq!(rtx.country, "US");
+        assert!(
+            rtx.host_label.ends_with("United States"),
+            "{}",
+            rtx.host_label
+        );
         assert!(rtx.is_datacenter);
         let expected_compute = 0.35 + 0.003 * 8.0 + 0.002 * 32.0;
         assert!((rtx.compute_hourly_price - expected_compute).abs() < 1e-9);
@@ -786,6 +922,31 @@ mod tests {
         }]}});
         assert_eq!(parse_locations(&body, 100).len(), 1);
         assert!(parse_locations(&body, 200).is_empty());
+    }
+
+    #[test]
+    fn availability_flags_and_alternate_price_keys_are_understood() {
+        let body = json!({"data": {"locations": [{
+            "id": "loc", "country": "Norway",
+            "gpus": [
+                {"v0Name": "rtxa5000-pcie-24gb", "available": true, "pricePerHour": 0.3},
+                {"v0Name": "rtxa4000-pcie-16gb", "available": false, "price_per_hr": 0.2},
+                {"v0Name": "l40s-pcie-48gb", "available_count": 0, "price_per_hr": 0.9}
+            ]
+        }]}});
+        let offers = parse_locations(&body, 100);
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].country, "NO");
+        assert!((offers[0].compute_hourly_price - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn json_shape_reports_keys_without_values() {
+        let shape = json_shape(
+            &json!({"data": {"locations": [{"id": "secret-ish", "n": 1}]}}),
+            4,
+        );
+        assert_eq!(shape, "{data: {locations: [1 x {id: string, n: number}]}}");
     }
 
     #[test]

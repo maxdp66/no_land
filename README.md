@@ -38,7 +38,7 @@ From one desktop app, No Land can:
 6. patch the local Moonlight configuration and guide pairing;
 7. persist provisioning checkpoints so completed steps can be safely skipped on retry;
 8. expose a native streaming path built around Moonlight/GameStream components.
-9. rent from Vast.ai or TensorDock, with offers from both ranked together;
+9. rent from Vast.ai, TensorDock or Shadeform, with offers from every provider ranked together;
 10. track estimated spend against a monthly budget, with warnings and optional auto-stop;
 11. save server + stream setups and start a matching server in one click;
 12. watch prices, flag preempted interruptible instances, and learn from each session's stream quality to rank future offers.
@@ -105,7 +105,7 @@ Project documentation lives in `docs/`:
 - [`docs/api-reference.md`](docs/api-reference.md) — API notes
 - [`docs/configuration.md`](docs/configuration.md) — runtime configuration
 - [`docs/operations.md`](docs/operations.md) — operational guidance
-- [`docs/providers.md`](docs/providers.md) — GPU provider abstraction and TensorDock
+- [`docs/providers.md`](docs/providers.md) — GPU provider abstraction, TensorDock and Shadeform
 - [`docs/spend-tracking.md`](docs/spend-tracking.md) — spend ledger and monthly budget
 - [`docs/stream-quality-history.md`](docs/stream-quality-history.md) — session quality history and offer ranking
 

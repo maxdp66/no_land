@@ -72,9 +72,10 @@ fn validate_auto_shutdown_request(
 
     if state.credentials.vast_api_key.trim().is_empty()
         && state.credentials.tensordock_api_key.trim().is_empty()
+        && state.credentials.shadeform_api_key.trim().is_empty()
     {
         return Err(AppError::InvalidInput(
-            "Add your Vast.ai or TensorDock API key before enabling automatic backup and shutdown."
+            "Add your Vast.ai, TensorDock or Shadeform API key before enabling automatic backup and shutdown."
                 .to_string(),
         ));
     }
