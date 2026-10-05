@@ -511,6 +511,15 @@ export function App() {
   const saveCloudflareTurnSettings = useAppStore((state) => state.saveCloudflareTurnSettings);
   const clearCloudflareTurnSettings = useAppStore((state) => state.clearCloudflareTurnSettings);
   const regenerateEdid = useAppStore((state) => state.regenerateEdid);
+  const reconnectLocalWireguardClient = useAppStore(
+    (state) => state.reconnectLocalWireguardClient,
+  );
+  const disconnectLocalWireguardClient = useAppStore(
+    (state) => state.disconnectLocalWireguardClient,
+  );
+  const verifyWireguardConnection = useAppStore(
+    (state) => state.verifyWireguardConnection,
+  );
   const storageProviders = useAppStore((state) => state.storageProviders);
   const sharedStorageProfiles = useAppStore(
     (state) => state.sharedStorageProfiles,
@@ -965,6 +974,9 @@ export function App() {
                   onSaveCloudflareTurnSettings={saveCloudflareTurnSettings}
                   onClearCloudflareTurnSettings={clearCloudflareTurnSettings}
                   onRegenerateEdid={regenerateEdid}
+                  onTunnelConnect={reconnectLocalWireguardClient}
+                  onTunnelDisconnect={disconnectLocalWireguardClient}
+                  onTunnelVerify={verifyWireguardConnection}
                 />
               ) : (
                 <Navigate to="/" replace />

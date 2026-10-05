@@ -32,6 +32,8 @@ import type {
   CloudflareTurnTestResult,
   ConnectionPreference,
   InstanceConnectionStatusResponse,
+  ReachabilityResult,
+  WireGuardSetupStatus,
 } from "../../lib/types";
 import {
   VAST_API_KEY_URL,
@@ -124,6 +126,9 @@ interface Props {
     mode: "auto_detect" | "mac_hardware" | "manual";
     refreshRateHz: number;
   }) => Promise<void>;
+  onTunnelConnect: () => Promise<string | null>;
+  onTunnelDisconnect: () => Promise<string | null>;
+  onTunnelVerify: () => Promise<ReachabilityResult | null>;
 }
 
 function toNumber(value: string, fallback: number): number {
@@ -139,6 +144,30 @@ type SelectOption = {
   value: string;
   label: string;
 };
+
+const tunnelStatusLabels: Record<WireGuardSetupStatus, string> = {
+  not_started: "Off",
+  config_generated: "Off",
+  app_handoff_started: "Starting",
+  waiting_for_user_import: "Starting",
+  waiting_for_user_activation: "Starting",
+  verifying: "Verifying",
+  connected: "Connected",
+  failed: "Failed",
+};
+
+function tunnelStatusClass(status: WireGuardSetupStatus): string {
+  if (status === "connected") {
+    return "border-[#7bff48] text-[#b4ff88]";
+  }
+  if (status === "failed") {
+    return "border-[#ff8ca2] text-[#ffc1cf]";
+  }
+  if (status === "not_started" || status === "config_generated") {
+    return "border-[#48527a] text-[#b7d7f2]";
+  }
+  return "border-[#61f7ff] text-[#7cf8ff]";
+}
 
 const binaryOptions: SelectOption[] = [
   { value: "0", label: "Disabled" },
@@ -250,6 +279,9 @@ export function SettingsScreen({
   onSaveCloudflareTurnSettings,
   onClearCloudflareTurnSettings,
   onRegenerateEdid,
+  onTunnelConnect,
+  onTunnelDisconnect,
+  onTunnelVerify,
 }: Props) {
   const [searchParams] = useSearchParams();
   const [section, setSection] = useState<SettingsSection>(() =>
@@ -290,6 +322,8 @@ export function SettingsScreen({
   >({});
   const [switchingInstanceId, setSwitchingInstanceId] = useState<number | null>(null);
   const [connectionStatusError, setConnectionStatusError] = useState<string | null>(null);
+  const [tunnelCheck, setTunnelCheck] = useState<ReachabilityResult | null>(null);
+  const [tunnelMessage, setTunnelMessage] = useState<string | null>(null);
 
   const [serverForm, setServerForm] = useState({
     minReliability: appState.serverPreferences.minReliability.toString(),
@@ -1267,6 +1301,29 @@ export function SettingsScreen({
     </Card>
   );
 
+  const tunnelStatus = appState.postWireguardSetup.wireguardSetupStatus;
+  const hasTunnelConfig = appState.provisionedServers.length > 0;
+
+  const handleTunnelTurnOn = async () => {
+    setTunnelMessage(null);
+    const result = await onTunnelConnect();
+    if (result === null) {
+      return;
+    }
+    setTunnelMessage(result);
+    setTunnelCheck(await onTunnelVerify());
+  };
+
+  const handleTunnelTurnOff = async () => {
+    setTunnelCheck(null);
+    setTunnelMessage(await onTunnelDisconnect());
+  };
+
+  const handleTunnelVerify = async () => {
+    setTunnelMessage(null);
+    setTunnelCheck(await onTunnelVerify());
+  };
+
   const connectionPanel = (
     <Card className="pixel-frame min-w-0 overflow-hidden">
       <h2 className="font-display text-[11px] uppercase tracking-[0.12em] text-neon-lime">
@@ -1286,6 +1343,67 @@ export function SettingsScreen({
         <p className="mt-2 text-[1.05rem] leading-snug text-[#a8bed6]">
           Keep this set to the managed tunnel option so Noland can configure the local desktop connection automatically.
         </p>
+      </div>
+
+      <div className="mt-4 rounded-md border border-[#3b4067] bg-[#10152f] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-display text-[10px] uppercase tracking-[0.12em] text-neon-cyan">
+              Managed Tunnel Control
+            </h3>
+            <p className="mt-2 max-w-3xl text-[1.05rem] leading-snug text-[#a8bed6]">
+              Turn the local WireGuard tunnel to your active instance on or off, and check that 10.77.0.1 is reachable through it.
+            </p>
+          </div>
+          <span
+            className={`rounded-sm border px-2 py-1 font-display text-[9px] uppercase tracking-[0.12em] ${tunnelStatusClass(tunnelStatus)}`}
+          >
+            {tunnelStatusLabels[tunnelStatus]}
+          </span>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Button
+            size="compact"
+            variant="secondary"
+            disabled={busy || !hasTunnelConfig}
+            onClick={() => void handleTunnelTurnOn()}
+          >
+            Turn On
+          </Button>
+          <Button
+            size="compact"
+            variant="danger"
+            disabled={busy || !hasTunnelConfig}
+            onClick={() => void handleTunnelTurnOff()}
+          >
+            Turn Off
+          </Button>
+          <Button
+            size="compact"
+            variant="ghost"
+            disabled={busy || !hasTunnelConfig}
+            onClick={() => void handleTunnelVerify()}
+          >
+            Check Status
+          </Button>
+        </div>
+        {!hasTunnelConfig ? (
+          <p className="mt-3 text-[1rem] text-[#8fa9c8]">
+            Provision an instance first to generate a tunnel config.
+          </p>
+        ) : null}
+        {tunnelMessage ? (
+          <p className="mt-3 text-[1rem] text-[#a8bed6]">{tunnelMessage}</p>
+        ) : null}
+        {tunnelCheck ? (
+          <p
+            className={`mt-3 text-[1rem] ${tunnelCheck.reachable ? "text-[#b4ff88]" : "text-[#ffc1cf]"}`}
+          >
+            {tunnelCheck.reachable
+              ? `Reachable: ${tunnelCheck.host} on ports ${tunnelCheck.reachablePorts.join(", ")}`
+              : `Not reachable: ${tunnelCheck.error ?? `${tunnelCheck.host} did not respond`}`}
+          </p>
+        ) : null}
       </div>
 
       <div className="mt-4 rounded-md border border-[#3b4067] bg-[#10152f] p-4">
