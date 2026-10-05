@@ -2663,11 +2663,8 @@ async fn bootstrap_vm_access(
     let target_user = sanitize_ssh_user(&context.config.audio_target_user);
     let script = access_bootstrap_script(&target_user, &password);
     let mut bootstrap = remote.clone();
+    // The script also creates the desktop user, so it runs even as root.
     bootstrap.ssh_user = sanitize_ssh_user(login_user);
-    if bootstrap.ssh_user == "root" {
-        // Already root: the key is authorized where it needs to be.
-        return Ok(());
-    }
 
     emit_transition(
         app,

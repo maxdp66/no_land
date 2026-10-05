@@ -522,7 +522,8 @@ pub fn parse_instance_types(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
         .unwrap_or_default();
 
     let mut offers = Vec::new();
-    let (mut excluded_cloud, mut no_nvenc, mut multi_gpu, mut unavailable) = (0, 0, 0, 0);
+    let (mut excluded_cloud, mut no_nvenc, mut multi_gpu, mut unavailable, mut too_small) =
+        (0, 0, 0, 0, 0);
     for item in &types {
         let cloud = text(item, "cloud");
         let shade_instance_type = text(item, "shade_instance_type");
@@ -556,6 +557,11 @@ pub fn parse_instance_types(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
         let vram_gb = number(&config, "vram_per_gpu_in_gb").unwrap_or_default();
         let vcpus = number(&config, "vcpus").unwrap_or_default();
         let disk_gb = number(&config, "storage_in_gb").unwrap_or_default();
+        // The disk size is fixed per instance type.
+        if disk_gb > 0.0 && disk_gb < f64::from(storage_gb) {
+            too_small += 1;
+            continue;
+        }
         let os = preferred_os(config.get("os_options"));
 
         for availability in item
@@ -633,13 +639,14 @@ pub fn parse_instance_types(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
         }
     }
     let message = format!(
-        "Shadeform instance types: {} type(s), {} offer(s); skipped {} on excluded clouds, {} without NVENC, {} multi-GPU, {} unavailable regions",
+        "Shadeform instance types: {} type(s), {} offer(s); skipped {} on excluded clouds, {} without NVENC, {} multi-GPU, {} unavailable regions, {} with less than {storage_gb} GB disk",
         types.len(),
         offers.len(),
         excluded_cloud,
         no_nvenc,
         multi_gpu,
-        unavailable
+        unavailable,
+        too_small
     );
     if offers.is_empty() {
         warn!("{message}; response shape: {}", json_shape(body, 3));
@@ -871,6 +878,10 @@ mod tests {
         assert!((us.hourly_price - 0.57).abs() < 1e-9);
         assert_eq!(us.available_storage_gb, 256);
         assert!(us.latitude != 0.0 && us.longitude != 0.0);
+        assert!(
+            parse_instance_types(&types_body(), 300).is_empty(),
+            "256 GB disks are too small for 300 GB"
+        );
         assert!(us.id >= crate::models::provider::FOREIGN_LOCAL_ID_BASE);
         let offer_ref: ShadeformOfferRef = serde_json::from_str(&us.provider_offer_ref).unwrap();
         assert_eq!(offer_ref.cloud, "massedcompute");

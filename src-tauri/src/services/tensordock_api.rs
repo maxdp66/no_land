@@ -292,10 +292,12 @@ pub fn access_bootstrap_script(target_user: &str, target_password: &str) -> Stri
     format!(
         r#"set -eu
 sudo -n true
-sudo install -d -m 700 /root/.ssh
-cat ~/.ssh/authorized_keys | sudo tee -a /root/.ssh/authorized_keys >/dev/null
-sudo sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys
-sudo chmod 600 /root/.ssh/authorized_keys
+if [ "$(id -u)" -ne 0 ]; then
+  sudo install -d -m 700 /root/.ssh
+  cat ~/.ssh/authorized_keys | sudo tee -a /root/.ssh/authorized_keys >/dev/null
+  sudo sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys
+  sudo chmod 600 /root/.ssh/authorized_keys
+fi
 if ! id -u {user} >/dev/null 2>&1; then sudo useradd -m -s /bin/bash -G sudo {user}; fi
 echo {credentials} | sudo chpasswd
 sudo install -d -m 755 /etc/ssh/sshd_config.d
@@ -1176,6 +1178,8 @@ mod tests {
         let script = access_bootstrap_script("user", "pa'ss");
         assert!(script.contains(r"echo 'user:pa'\''ss' | sudo chpasswd"));
         assert!(script.contains("PermitRootLogin prohibit-password"));
+        // Copying keys as root would append authorized_keys to itself.
+        assert!(script.contains(r#"if [ "$(id -u)" -ne 0 ]; then"#));
         assert!(script.trim_end().ends_with("NOLAND_ACCESS_READY"));
     }
 
