@@ -377,15 +377,17 @@ fn gpu_has_nvenc(gpu_type: &str) -> bool {
         .any(|prefix| normalized.starts_with(prefix))
 }
 
-/// "A6000" → "RTX A6000", "RTX4090" → "RTX 4090", "L40S" stays.
+/// "A6000" → "RTX A6000", "RTX4090" → "RTX 4090", "RTX6000Ada" →
+/// "RTX 6000 Ada", "L40S" stays.
 fn pretty_gpu_name(gpu_type: &str) -> String {
     let name = gpu_type.trim().replace('_', " ");
     let upper = name.to_ascii_uppercase();
-    if let Some(rest) = upper.strip_prefix("RTX") {
-        let rest = rest.trim();
-        if !rest.is_empty() {
-            return format!("RTX {rest}");
-        }
+    if upper.starts_with("RTX") && name.len() > 3 {
+        let rest = name[3..].trim().replace("Ada", " Ada");
+        return format!(
+            "RTX {}",
+            rest.split_whitespace().collect::<Vec<_>>().join(" ")
+        );
     }
     if ["A4000", "A4500", "A5000", "A6000"].contains(&upper.as_str()) {
         return format!("RTX {upper}");
@@ -891,6 +893,7 @@ mod tests {
         assert_eq!(region_country("x", "DE, Frankfurt"), "DE");
         assert_eq!(region_country("norway-1", ""), "NO");
         assert_eq!(region_country("mystery-9", ""), "");
+        assert_eq!(region_country("paris-france-5", "FR, Paris"), "FR");
         assert_eq!(
             region_country("europe-central-1", ""),
             "",
@@ -1031,6 +1034,15 @@ mod tests {
         assert_eq!(payload["os"], "ubuntu22.04_cuda12.2_shade_os");
         assert_eq!(payload["shade_cloud"], true);
         assert_eq!(payload["rental_type"], "on_demand");
+    }
+
+    #[test]
+    fn gpu_names_read_naturally() {
+        assert_eq!(pretty_gpu_name("RTX6000Ada"), "RTX 6000 Ada");
+        assert_eq!(pretty_gpu_name("RTX5090"), "RTX 5090");
+        assert_eq!(pretty_gpu_name("A6000"), "RTX A6000");
+        assert_eq!(pretty_gpu_name("V100_32G"), "V100 32G");
+        assert_eq!(pretty_gpu_name("L40S"), "L40S");
     }
 
     #[test]

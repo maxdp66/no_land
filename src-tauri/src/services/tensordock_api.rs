@@ -191,6 +191,8 @@ impl TensorDockApiClient {
             .await?;
         let items = body
             .pointer("/data/instances")
+            // The getting-started page shows this JSON:API list envelope.
+            .or_else(|| body.pointer("/data/attributes/instances"))
             .or_else(|| body.get("instances"))
             .or_else(|| body.get("data"))
             .and_then(Value::as_array)
@@ -423,9 +425,18 @@ fn gpu_entries(raw: Option<&Value>) -> Vec<(String, Value)> {
                 (!name.is_empty()).then(|| (name, item.clone()))
             })
             .collect(),
+        // Keys are the model; instance details also carry `v0Name` inside.
         Some(Value::Object(map)) => map
             .iter()
-            .map(|(name, item)| (name.clone(), item.clone()))
+            .map(|(name, item)| {
+                let inner = string_any(item, &["v0Name", "v0_name", "gpuV0Name"]);
+                let name = if inner.is_empty() {
+                    name.clone()
+                } else {
+                    inner
+                };
+                (name, item.clone())
+            })
             .collect(),
         _ => Vec::new(),
     }
@@ -986,6 +997,57 @@ mod tests {
             instance.id,
             foreign_local_id(CloudProviderKind::Tensordock, "6b7e8f0a-1c2d-4e5f")
         );
+    }
+
+    #[test]
+    fn parses_flat_instance_from_official_docs() {
+        // Shape of GET /api/v2/instances/{id} in TensorDock's API docs.
+        let body = json!({
+            "type": "instance",
+            "id": "inst-1",
+            "name": "noland",
+            "status": "running",
+            "ipAddress": "203.0.113.50",
+            "portForwards": [],
+            "resources": {
+                "vcpu_count": 8, "ram_gb": 32, "storage_gb": 100,
+                "gpus": { "RTX 4090": { "count": 1, "v0Name": "geforcertx4090-pcie-24gb" } }
+            },
+            "rateHourly": 0.62
+        });
+        let envelope = body.get("data").unwrap_or(&body);
+        let parsed = parse_instance(envelope, Some("inst-1")).unwrap();
+        assert_eq!(parsed.remote_id, "inst-1");
+        assert_eq!(parsed.instance.public_ip, "203.0.113.50");
+        assert_eq!(parsed.instance.ssh_port, 22);
+        assert_eq!(parsed.instance.wireguard_port, 51820);
+        assert_eq!(parsed.instance.gpu_name, "RTX 4090");
+    }
+
+    #[test]
+    fn parses_official_locations_example() {
+        // Response example of GET /api/v2/locations in TensorDock's API docs.
+        let body = json!({"data": {"locations": [{
+            "id": "loc-uuid-12345", "city": "Austin", "stateprovince": "Texas",
+            "country": "United States", "tier": 3,
+            "gpus": [
+                {"v0Name": "h100-sxm5-80gb", "displayName": "H100 SXM5 80GB", "max_count": 8,
+                 "price_per_hr": 2.2,
+                 "resources": {"max_vcpus": 128, "max_ram_gb": 300, "max_storage_gb": 1000},
+                 "pricing": {"per_vcpu_hr": 0.003, "per_gb_ram_hr": 0.002, "per_gb_storage_hr": 0.00005},
+                 "network_features": {"dedicated_ip_available": true, "port_forwarding_available": true}},
+                {"v0Name": "geforcertx4090-pcie-24gb", "displayName": "NVIDIA GeForce RTX 4090 PCIe 24GB",
+                 "max_count": 4, "price_per_hr": 0.5,
+                 "resources": {"max_vcpus": 32, "max_ram_gb": 128, "max_storage_gb": 2000},
+                 "pricing": {"per_vcpu_hr": 0.003, "per_gb_ram_hr": 0.002, "per_gb_storage_hr": 0.00005},
+                 "network_features": {"dedicated_ip_available": false, "port_forwarding_available": true}}
+            ]
+        }]}});
+        let offers = parse_locations(&body, 100);
+        assert_eq!(offers.len(), 1, "the 4090 has no dedicated IP");
+        assert_eq!(offers[0].country, "US");
+        assert_eq!(offers[0].gpu_name, "H100 SXM5 80GB");
+        assert!(parse_locations(&json!({"data": {"locations": []}}), 100).is_empty());
     }
 
     #[test]

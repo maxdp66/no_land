@@ -96,19 +96,23 @@ per-country counts.
 
 ## Caveats
 
-TensorDock's documentation site is not reachable from the environment this
-integration was built in, and TensorDock publishes no spec on GitHub. The
-request and response shapes come from TensorDock's public v2 API description
-and a third-party OpenAPI profile (api-evangelist/tensordock). That profile
-does not describe `GET /api/v2/locations` at all, and is inconsistent about
-the create request's `gpus` field (a list of `{gpuV0Name, count}` in its
-schema, an object in its example). Nothing has been exercised against a live
-account. Before relying on it:
+The TensorDock client was checked against TensorDock's official v2 API docs
+(dashboard.tensordock.com/api/docs: locations, instance creation and instance
+management). The locations response, the create request (including `gpus` as
+an object keyed by model) and the instance shapes match; the parsers also
+accept the flat `GET /api/v2/instances/{id}` response the docs show. It has
+not been exercised against a live account.
 
-- check the `gpus` shape in `create_instance_payload` (map keyed by
-  `v0Name`) against a real deployment;
-- confirm the default SSH user on the `ubuntu2404` image is `user`
+`GET /api/v2/locations` is public. When it returns an empty `locations`
+list, TensorDock has no location-based capacity at that moment and the app
+correctly shows no TensorDock offers. Hostnode-based deployment
+(`GET /api/v2/hostnodes`, authenticated) is not used yet; it needs explicit
+port forwards instead of a dedicated IP.
+
+Still unconfirmed because the docs do not say:
+
+- the default SSH user on the `ubuntu2404` image is assumed to be `user`
   (`TENSORDOCK_DEFAULT_SSH_USER`);
-- confirm stopped instances report `stopped` and that storage keeps billing
-  (the spend tracker assumes storage cost is `0` because the instance
-  payload does not include it).
+- whether storage keeps billing while an instance is stopped (the spend
+  tracker assumes storage cost is `0` because the instance payload does not
+  include it).
