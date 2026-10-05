@@ -360,6 +360,15 @@ export interface OfferCandidate {
   /** GPU provider: "vast" or "tensordock". */
   provider?: string;
   providerOfferRef?: string;
+  observedQuality?: ObservedQuality | null;
+  estimatedRttMs?: number | null;
+}
+
+export interface ObservedQuality {
+  score: number;
+  sessions: number;
+  avgRttMs: number | null;
+  basis: "host" | "region";
 }
 
 export interface InstanceState {

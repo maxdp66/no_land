@@ -27,6 +27,7 @@ mod package_manager;
 
 pub mod post_wireguard_setup;
 pub mod price_watch;
+pub mod quality_recorder;
 pub mod reboot_helper;
 pub mod remote_display;
 pub mod remote_exec;

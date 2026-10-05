@@ -1,3 +1,4 @@
+import { offerQualityHint } from "./offerQuality";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AIPromptHelper } from "../../components/ui/AIPromptHelper";
 import { Button } from "../../components/ui/Button";
@@ -723,6 +724,20 @@ export function ServerPickerModal({
                       </span>
                     )}
                   </div>
+
+                  {(() => {
+                    const hint = offerQualityHint(offer);
+                    if (!hint) {
+                      return null;
+                    }
+                    const toneClass = {
+                      good: "text-[#b4ff88]",
+                      fair: "text-[#ffe0a3]",
+                      poor: "text-[#ffc1cf]",
+                      estimate: "text-[#8db7d8]",
+                    }[hint.tone];
+                    return <p className={`mt-2 text-[1rem] ${toneClass}`}>{hint.text}</p>;
+                  })()}
 
                   <div className="mt-3 grid grid-cols-2 gap-2 text-[1.2rem] leading-none text-[#c6dbf4]">
                     <p>Location: {offer.locationLabel}</p>

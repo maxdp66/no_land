@@ -466,6 +466,7 @@ fn main() {
             let performance_overlay = moonlight_manager.performance_overlay.clone();
             app.manage(moonlight_manager);
             moonlight::platform::performance_overlay::start(app.handle().clone(), performance_overlay);
+            services::quality_recorder::start(app.handle().clone(), context.clone());
 
             let price_app = app.handle().clone();
             let price_context = context.clone();

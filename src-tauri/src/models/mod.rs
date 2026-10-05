@@ -5,5 +5,6 @@ pub mod launch_library;
 pub mod presets;
 pub mod price_alerts;
 pub mod provider;
+pub mod quality;
 pub mod spend;
 pub mod vast;

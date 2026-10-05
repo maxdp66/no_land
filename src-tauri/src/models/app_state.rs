@@ -46,6 +46,8 @@ pub struct PersistedAppState {
     pub server_presets: Vec<crate::models::presets::ServerPreset>,
     #[serde(default)]
     pub price_alerts: Vec<crate::models::price_alerts::PriceAlert>,
+    #[serde(default)]
+    pub quality_history: Vec<crate::models::quality::SessionQualityRecord>,
     /// Local id ↔ provider id links for non-Vast instances.
     #[serde(default)]
     pub provider_instance_refs: Vec<crate::models::provider::ProviderInstanceRef>,
@@ -81,6 +83,7 @@ impl Default for PersistedAppState {
             spend: crate::models::spend::SpendState::default(),
             server_presets: Vec::new(),
             price_alerts: Vec::new(),
+            quality_history: Vec::new(),
             provider_instance_refs: Vec::new(),
             last_error: None,
         }
@@ -325,6 +328,12 @@ pub struct OfferCandidate {
     pub provider: String,
     #[serde(default)]
     pub provider_offer_ref: String,
+    /// This user's own streaming history on this host or region.
+    #[serde(default)]
+    pub observed_quality: Option<crate::models::quality::ObservedQuality>,
+    /// Distance-based round-trip estimate, for offers without history.
+    #[serde(default)]
+    pub estimated_rtt_ms: Option<f64>,
 }
 
 /// A two-letter geolocation code with the number of rentable offers Vast

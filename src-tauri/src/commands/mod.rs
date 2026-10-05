@@ -1952,7 +1952,11 @@ pub async fn search_offers(
     let selector = OfferSelector {
         scoring: context.config.scoring.clone(),
     };
-    let ranked = selector.rank_offers(offers, &state_snapshot.location);
+    let ranked = selector.rank_offers_with_history(
+        offers,
+        &state_snapshot.location,
+        &state_snapshot.quality_history,
+    );
 
     let filtered: Vec<_> = ranked
         .into_iter()

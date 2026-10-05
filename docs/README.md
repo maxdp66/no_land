@@ -12,6 +12,7 @@ This folder is the source of truth for how Noland Connect works end-to-end.
 - `docs/configuration.md`: environment variables, defaults, and tuning knobs
 - `docs/operations.md`: build/release workflows, release artifacts, and operational runbook
 - `docs/providers.md`: GPU provider abstraction, TensorDock integration, and why RunPod is not supported
+- `docs/stream-quality-history.md`: per-session quality records and how they shape offer ranking
 - `docs/spend-tracking.md`: local spend ledger, monthly budget, alerts, and budget auto-stop
 - `docs/automatic-backup-shutdown.md`: remote lifecycle architecture, safety rules, deployment paths, and E2E procedure
 - `docs/noland-connect-system.md`: full production-grade deep system documentation
