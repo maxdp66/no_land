@@ -12,6 +12,7 @@ import { SharedStorageSettingsV2 } from "../shared-storage/SharedStorageSettings
 import { AutoShutdownSettings } from "./AutoShutdownSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { TensorDockKeySettings } from "./TensorDockKeySettings";
+import { ControllerTester } from "../controllers/ControllerTester";
 import { BudgetSettings } from "../spend/BudgetSettings";
 import {
   getInstanceConnectionStatus,
@@ -1270,6 +1271,7 @@ export function SettingsScreen({
           Save Client Config
         </Button>
       </div>
+      <ControllerTester />
     </Card>
   );
 
