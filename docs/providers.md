@@ -122,8 +122,13 @@ Still unconfirmed because the docs do not say:
   If WireGuard's port is not forwarded for UDP, provisioning stops at the
   WireGuard step (no handshake), and dedicated-IP offers should be used;
 
-- the default SSH user on the `ubuntu2404` image is assumed to be `user`
-  (`TENSORDOCK_DEFAULT_SSH_USER`);
-- whether storage keeps billing while an instance is stopped (the spend
-  tracker assumes storage cost is `0` because the instance payload does not
-  include it).
+- whether `rateHourly` on a stopped instance reports the storage charge.
+  TensorDock's help site (docs.tensordock.com, Spot Instances) says storage
+  is billed at the standard rate even when a workload is not running, but
+  the spend tracker assumes TensorDock storage cost is `0` because the
+  instance payload has no separate storage price.
+
+Confirmed by docs.tensordock.com: the default login user on Ubuntu images
+is `user` (`ssh user@ip`, matching `TENSORDOCK_DEFAULT_SSH_USER`), and
+Linux VMs start with all ports open and UFW disabled; provisioning enables
+UFW with rules for SSH, WireGuard and the network probe.
