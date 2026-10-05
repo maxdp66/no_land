@@ -14,6 +14,7 @@ describe("notificationPreferences", () => {
       storage: true,
       instances: true,
       provisioning: true,
+      budget: true,
     });
     expect(isNotificationEnabled("network")).toBe(true);
   });
@@ -29,6 +30,7 @@ describe("notificationPreferences", () => {
       storage: false,
       instances: true,
       provisioning: true,
+      budget: true,
     });
     expect(isNotificationEnabled("storage")).toBe(false);
   });
@@ -41,6 +43,7 @@ describe("notificationPreferences", () => {
       storage: true,
       instances: false,
       provisioning: true,
+      budget: true,
     });
   });
 
@@ -51,6 +54,7 @@ describe("notificationPreferences", () => {
       storage: true,
       instances: true,
       provisioning: false,
+      budget: true,
     });
   });
 
@@ -61,6 +65,7 @@ describe("notificationPreferences", () => {
       storage: true,
       instances: true,
       provisioning: true,
+      budget: true,
     });
   });
 
