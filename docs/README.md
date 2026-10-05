@@ -14,10 +14,16 @@ This folder is the source of truth for how Noland Connect works end-to-end.
 - `docs/automatic-backup-shutdown.md`: remote lifecycle architecture, safety rules, deployment paths, and E2E procedure
 - `docs/noland-connect-system.md`: full production-grade deep system documentation
 
+## Notes and plans
+
+- `docs/PROVISIONING_STEPS.md`: provisioning checklist notes
+- `docs/KVM_GOLDEN_IMAGE_SETUP.md`: VM image preparation notes
+- `docs/plans/`: shared storage optimization and restore implementation plans
+- `docs/networking/windows-adapter-troubleshooting.md`: clearing stale Windows WireGuard adapter state
+- `docs/examples/sample-state.json`: example persisted app state
+
 ## Related project docs outside this folder
 
 - `README.md`: repo setup, stack, and top-level project overview
-- `PROVISIONING_STEPS.md`: provisioning checklist notes
-- `KVM_GOLDEN_IMAGE_SETUP.md`: VM image preparation notes
 
 If a behavior changes in code, update the relevant file in this folder in the same PR.
