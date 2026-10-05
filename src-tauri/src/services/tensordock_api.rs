@@ -209,10 +209,31 @@ impl TensorDockApiClient {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Ok(items
+        let listed = items
             .iter()
             .filter_map(|item| parse_instance(item, None))
-            .collect())
+            .collect::<Vec<_>>();
+
+        // The list only carries id, name and status. Fetch details (IP,
+        // ports, GPU, rate) so refreshes do not blank saved SSH endpoints.
+        let mut instances = Vec::with_capacity(listed.len());
+        for instance in listed {
+            if !needs_details(&instance) {
+                instances.push(instance);
+                continue;
+            }
+            match self.get_instance(&instance.remote_id).await {
+                Ok(detailed) => instances.push(detailed),
+                Err(error) => {
+                    warn!(
+                        "TensorDock instance {} details failed (using list entry): {error}",
+                        instance.remote_id
+                    );
+                    instances.push(instance);
+                }
+            }
+        }
+        Ok(instances)
     }
 
     pub async fn stop_instance(&self, remote_id: &str) -> AppResult<()> {
@@ -241,6 +262,13 @@ impl TensorDockApiClient {
             .await
             .map(|_| ())
     }
+}
+
+/// Whether a listed instance lacks the network details the app relies on.
+/// Deleted instances are skipped since they have none to fetch.
+fn needs_details(instance: &TensorDockInstance) -> bool {
+    instance.instance.public_ip.trim().is_empty()
+        && !matches!(instance.instance.status.as_str(), "destroying" | "deleted")
 }
 
 /// Request body for `POST /api/v2/instances`.
@@ -1058,6 +1086,36 @@ mod tests {
         assert_eq!(parsed.instance.ssh_port, 22);
         assert_eq!(parsed.instance.wireguard_port, 51820);
         assert_eq!(parsed.instance.gpu_name, "RTX 4090");
+    }
+
+    #[test]
+    fn listed_instances_without_an_ip_need_details() {
+        // Item shape of GET /api/v2/instances in TensorDock's API docs.
+        let listed = parse_instance(
+            &json!({
+                "type": "VM",
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "attributes": { "name": "My Instance", "status": "running" }
+            }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(listed.remote_id, "550e8400-e29b-41d4-a716-446655440000");
+        assert!(listed.instance.public_ip.is_empty());
+        assert!(needs_details(&listed));
+
+        let detailed = parse_instance(
+            &json!({"id": "a", "status": "running", "ipAddress": "203.0.113.9"}),
+            None,
+        )
+        .unwrap();
+        assert!(!needs_details(&detailed));
+        let deleting = parse_instance(
+            &json!({"id": "b", "attributes": {"status": "deleting"}}),
+            None,
+        )
+        .unwrap();
+        assert!(!needs_details(&deleting));
     }
 
     #[test]

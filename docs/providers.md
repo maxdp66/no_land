@@ -128,6 +128,12 @@ Still unconfirmed because the docs do not say:
   the spend tracker assumes TensorDock storage cost is `0` because the
   instance payload has no separate storage price.
 
+`GET /api/v2/instances` returns only each instance's id, name and status,
+so the client fetches `GET /api/v2/instances/{id}` for any listed instance
+without an IP, and a refresh keeps a server's last known SSH endpoint if
+neither returns one. TensorDock's billing API is not available yet, so
+there is no wallet balance for TensorDock in the app.
+
 Confirmed by docs.tensordock.com: the default login user on Ubuntu images
 is `user` (`ssh user@ip`, matching `TENSORDOCK_DEFAULT_SSH_USER`), and
 Linux VMs start with all ports open and UFW disabled; provisioning enables

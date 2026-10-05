@@ -150,8 +150,12 @@ impl InstanceLifecycleService {
                         (state.instance.instance_id == Some(instance.id)).then_some(offer.id)
                     });
                     record.status = instance.status.clone();
-                    record.ssh_host = instance.ssh_host.clone();
-                    record.ssh_port = instance.ssh_port;
+                    // Keep the last known endpoint when a listing omits it
+                    // (TensorDock's list has no IP; details can fail).
+                    if !instance.ssh_host.trim().is_empty() && instance.ssh_port != 0 {
+                        record.ssh_host = instance.ssh_host.clone();
+                        record.ssh_port = instance.ssh_port;
+                    }
                     record.ssh_command = instance.ssh_command.clone();
                     record.hourly_price = instance.hourly_price;
                     record.compute_hourly_price = instance.compute_hourly_price;
