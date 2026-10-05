@@ -23,6 +23,7 @@ pub mod nvidia_headless;
 pub mod offer_selector;
 pub mod orchestration;
 pub mod os_detection;
+pub mod play_history;
 mod package_manager;
 
 pub mod post_wireguard_setup;

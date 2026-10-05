@@ -4,8 +4,10 @@ import { SpriteIcon } from "../../components/ui/SpriteIcon";
 import type {
   LaunchLibraryItem,
   LaunchSoftwareJob,
+  PlayStats,
   SoftwareArtworkResult,
 } from "../../lib/types";
+import { playStatsLine } from "./playStats";
 
 interface LaunchPcCardProps {
   available: boolean;
@@ -22,6 +24,7 @@ interface SoftwareLaunchCardProps {
   disabled: boolean;
   onLoadArtwork: (name: string) => Promise<SoftwareArtworkResult | null>;
   onLaunch: () => void;
+  playStats?: PlayStats;
 }
 
 const cardClassName =
@@ -125,6 +128,7 @@ export function SoftwareLaunchCard({
   disabled,
   onLoadArtwork,
   onLaunch,
+  playStats,
 }: SoftwareLaunchCardProps) {
   const [imageFailed, setImageFailed] = useState(false);
   const [requestedArtwork, setRequestedArtwork] = useState("");
@@ -186,6 +190,9 @@ export function SoftwareLaunchCard({
         </div>
 
         <h3 className="mt-4 font-display text-base text-white">{item.displayName}</h3>
+        {playStats ? (
+          <p className="mt-1 text-sm text-neon-cyan">{playStatsLine(playStats)}</p>
+        ) : null}
         <p className="mt-2 text-xs uppercase tracking-wider text-[#7890ae]">
           {item.launchMethod || "Detected software"}
         </p>

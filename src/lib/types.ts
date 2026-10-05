@@ -737,7 +737,16 @@ export interface PersistedAppState {
   connectionProvider: ConnectionProvider;
   serverPresets?: ServerPreset[];
   priceAlerts?: PriceAlert[];
+  playHistory?: PlayStats[];
   lastError: string | null;
+}
+
+export interface PlayStats {
+  appId: string;
+  displayName: string;
+  totalPlaySeconds: number;
+  launchCount: number;
+  lastPlayedAt: string;
 }
 
 export interface PriceAlert {

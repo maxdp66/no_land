@@ -98,8 +98,10 @@ pub fn start(app: AppHandle, context: AppContext) {
                 }
             }
             let Some(instance_id) = active else {
+                crate::services::play_history::expire_unconfirmed(Utc::now());
                 continue;
             };
+            crate::services::play_history::mark_streaming(instance_id);
             if current.is_none() {
                 let placement = placement_for(&*context.state.read().await, instance_id);
                 current = Some(QualityAccumulator::new(instance_id, placement, Utc::now()));
@@ -112,7 +114,9 @@ pub fn start(app: AppHandle, context: AppContext) {
 }
 
 async fn finish(app: &AppHandle, context: &AppContext, session: QualityAccumulator) {
-    let Some(record) = session.finish(Utc::now()) else {
+    let ended_at = Utc::now();
+    crate::services::play_history::stream_ended(context, session.instance_id, ended_at).await;
+    let Some(record) = session.finish(ended_at) else {
         return;
     };
     let saved = record.clone();

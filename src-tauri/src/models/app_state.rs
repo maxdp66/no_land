@@ -48,6 +48,8 @@ pub struct PersistedAppState {
     pub price_alerts: Vec<crate::models::price_alerts::PriceAlert>,
     #[serde(default)]
     pub quality_history: Vec<crate::models::quality::SessionQualityRecord>,
+    #[serde(default)]
+    pub play_history: Vec<crate::models::play_history::PlayStats>,
     /// Local id ↔ provider id links for non-Vast instances.
     #[serde(default)]
     pub provider_instance_refs: Vec<crate::models::provider::ProviderInstanceRef>,
@@ -84,6 +86,7 @@ impl Default for PersistedAppState {
             server_presets: Vec::new(),
             price_alerts: Vec::new(),
             quality_history: Vec::new(),
+            play_history: Vec::new(),
             provider_instance_refs: Vec::new(),
             last_error: None,
         }

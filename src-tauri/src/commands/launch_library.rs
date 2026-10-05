@@ -267,7 +267,15 @@ async fn run_launch(
 
     launch_remote_software(&remote, &target_user, &entry)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    crate::services::play_history::record_launch(
+        context,
+        instance_id,
+        &entry.item.app_id,
+        &entry.item.display_name,
+    )
+    .await;
+    Ok(())
 }
 
 fn find_entry(
