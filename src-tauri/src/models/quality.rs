@@ -251,7 +251,8 @@ pub fn observed_quality(
 /// Rough round-trip estimate from distance: ~1 ms per 100 km of fiber plus
 /// a fixed allowance for access networks and encode/decode hops.
 pub fn estimated_rtt_from_distance(distance_km: f64) -> Option<f64> {
-    (distance_km.is_finite() && distance_km >= 0.0 && distance_km < 20_000.0)
+    (0.0..20_000.0)
+        .contains(&distance_km)
         .then(|| (distance_km / 100.0 + 8.0).round())
 }
 

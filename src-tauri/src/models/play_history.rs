@@ -35,7 +35,7 @@ pub fn record_launch(history: &mut Vec<PlayStats>, app_id: &str, display_name: &
         }),
     }
     if history.len() > MAX_PLAY_ENTRIES {
-        history.sort_by(|left, right| right.last_played_at.cmp(&left.last_played_at));
+        history.sort_by_key(|entry| std::cmp::Reverse(entry.last_played_at));
         history.truncate(MAX_PLAY_ENTRIES);
     }
 }

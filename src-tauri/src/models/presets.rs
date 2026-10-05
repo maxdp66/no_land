@@ -87,8 +87,10 @@ mod tests {
     use super::*;
 
     fn preset(name: &str, storage_gb: u32) -> ServerPreset {
-        let mut server_preferences = ServerPreferences::default();
-        server_preferences.storage_gb = storage_gb;
+        let server_preferences = ServerPreferences {
+            storage_gb,
+            ..ServerPreferences::default()
+        };
         ServerPreset {
             id: format!("id-{name}"),
             name: name.to_string(),
