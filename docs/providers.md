@@ -36,7 +36,14 @@ configured provider are merged and ranked together in the server picker.
 
 1. Offers come from `GET /api/v2/locations`: one per location and GPU model,
    priced for 1 GPU, 8 vCPU, 32 GB RAM and the requested storage (minimum
-   100 GB). GPUs that are sold out, or have no dedicated IP, are skipped.
+   100 GB). Sold-out GPUs are skipped. GPUs with a dedicated IP are deployed
+   with `useDedicatedIp: true`; GPUs without one but with
+   `port_forwarding_available` are offered as "(port-forwarded)" (and count
+   as no static IP) and deployed with `port_forwards` for SSH (22),
+   WireGuard (51820) and the network probe (6201), each with
+   `external_port: 0` so TensorDock assigns the public port. GPUs with
+   neither are skipped. Streaming runs inside the WireGuard tunnel, so no
+   other ports are needed.
 2. `POST /api/v2/instances` with `useDedicatedIp: true` and the managed SSH
    public key.
 3. Once SSH answers, the orchestrator logs in as TensorDock's default user
@@ -110,6 +117,10 @@ correctly shows no TensorDock offers. Hostnode-based deployment
 port forwards instead of a dedicated IP.
 
 Still unconfirmed because the docs do not say:
+
+- whether `port_forwards` carries UDP. The request has no protocol field.
+  If WireGuard's port is not forwarded for UDP, provisioning stops at the
+  WireGuard step (no handshake), and dedicated-IP offers should be used;
 
 - the default SSH user on the `ubuntu2404` image is assumed to be `user`
   (`TENSORDOCK_DEFAULT_SSH_USER`);

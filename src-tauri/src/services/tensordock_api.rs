@@ -36,6 +36,10 @@ const TENSORDOCK_IMAGE: &str = "ubuntu2404";
 pub const TENSORDOCK_MIN_STORAGE_GB: u32 = 100;
 const DEFAULT_VCPUS: u32 = 8;
 const DEFAULT_RAM_GB: u32 = 32;
+/// Ports forwarded when a location has no dedicated IP: SSH, WireGuard (all
+/// streaming runs through the tunnel) and the network probe. An external
+/// port of 0 lets TensorDock pick one.
+const FORWARDED_PORTS: [u16; 3] = [22, 51820, 6201];
 
 /// Everything needed to deploy one offer, serialized into
 /// `VastOffer::provider_offer_ref`.
@@ -46,6 +50,13 @@ pub struct TensorDockOfferRef {
     pub gpu_v0_name: String,
     pub vcpu_count: u32,
     pub ram_gb: u32,
+    /// `false` deploys with port forwards instead of a dedicated IP.
+    #[serde(default = "default_true")]
+    pub use_dedicated_ip: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A TensorDock instance plus its provider-side UUID.
@@ -239,7 +250,7 @@ pub fn create_instance_payload(
     label: &str,
     ssh_public_key: &str,
 ) -> Value {
-    json!({
+    let mut payload = json!({
         "data": {
             "type": "virtualmachine",
             "attributes": {
@@ -253,13 +264,23 @@ pub fn create_instance_payload(
                     "gpus": { offer_ref.gpu_v0_name.clone(): { "count": 1 } }
                 },
                 "location_id": offer_ref.location_id,
-                // A dedicated IP exposes every port, including the UDP ports
-                // WireGuard and GameStream need.
-                "useDedicatedIp": true,
                 "ssh_key": ssh_public_key.trim()
             }
         }
-    })
+    });
+    let attributes = &mut payload["data"]["attributes"];
+    if offer_ref.use_dedicated_ip {
+        // A dedicated IP exposes every port, including WireGuard's UDP port.
+        attributes["useDedicatedIp"] = Value::Bool(true);
+    } else {
+        attributes["port_forwards"] = Value::Array(
+            FORWARDED_PORTS
+                .iter()
+                .map(|port| json!({ "internal_port": port, "external_port": 0 }))
+                .collect(),
+        );
+    }
+    payload
 }
 
 /// Shell script run once over SSH as the image's default user, giving the
@@ -531,10 +552,16 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                 .or_else(|| gpu.get("networkFeatures"))
                 .cloned()
                 .unwrap_or(Value::Null);
-            if bool_any(&network, &["dedicated_ip_available", "dedicatedIpAvailable"]) == Some(false)
-            {
-                // Without a dedicated IP, inbound UDP for streaming is not
-                // guaranteed, so these offers are not usable.
+            let dedicated_ip = bool_any(
+                &network,
+                &["dedicated_ip_available", "dedicatedIpAvailable"],
+            ) != Some(false);
+            let port_forwarding = bool_any(
+                &network,
+                &["port_forwarding_available", "portForwardingAvailable"],
+            ) == Some(true);
+            if !dedicated_ip && !port_forwarding {
+                // No way to reach WireGuard's UDP port from outside.
                 skipped.no_dedicated_ip += 1;
                 continue;
             }
@@ -586,6 +613,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                 gpu_v0_name: gpu_v0_name.clone(),
                 vcpu_count,
                 ram_gb,
+                use_dedicated_ip: dedicated_ip,
             };
             let display_name = string_any(&gpu, &["displayName", "display_name"]);
             let gpu_name = if display_name.is_empty() {
@@ -609,7 +637,13 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                     &format!("{location_id}/{gpu_v0_name}"),
                 ),
                 host_id: None,
-                host_label: format!("TensorDock {host_label}").trim().to_string(),
+                host_label: if dedicated_ip {
+                    format!("TensorDock {host_label}").trim().to_string()
+                } else {
+                    format!("TensorDock {host_label} (port-forwarded)")
+                        .trim()
+                        .to_string()
+                },
                 city: city.clone(),
                 region: region.clone(),
                 country: country.clone(),
@@ -642,7 +676,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                 is_verified: true,
                 is_datacenter: tier >= 3.0,
                 offer_type: "on-demand".to_string(),
-                has_static_ip: true,
+                has_static_ip: dedicated_ip,
                 has_avx: true,
                 provider: CloudProviderKind::Tensordock.as_str().to_string(),
                 provider_offer_ref: serde_json::to_string(&offer_ref).unwrap_or_default(),
@@ -650,7 +684,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
         }
     }
     let message = format!(
-        "TensorDock locations: {} location(s), {} GPU type(s), {} offer(s); skipped {} sold out, {} without a dedicated IP, {} below {storage_gb} GB storage, {} without a price",
+        "TensorDock locations: {} location(s), {} GPU type(s), {} offer(s); skipped {} sold out, {} without a dedicated IP or port forwarding, {} below {storage_gb} GB storage, {} without a price",
         locations.len(),
         skipped.gpus_seen,
         offers.len(),
@@ -1044,9 +1078,17 @@ mod tests {
             ]
         }]}});
         let offers = parse_locations(&body, 100);
-        assert_eq!(offers.len(), 1, "the 4090 has no dedicated IP");
+        assert_eq!(offers.len(), 2);
         assert_eq!(offers[0].country, "US");
         assert_eq!(offers[0].gpu_name, "H100 SXM5 80GB");
+        assert!(offers[0].has_static_ip);
+        // The 4090 has no dedicated IP but supports port forwarding.
+        let forwarded = &offers[1];
+        assert!(!forwarded.has_static_ip);
+        assert!(forwarded.host_label.ends_with("(port-forwarded)"));
+        let offer_ref: TensorDockOfferRef =
+            serde_json::from_str(&forwarded.provider_offer_ref).unwrap();
+        assert!(!offer_ref.use_dedicated_ip);
         assert!(parse_locations(&json!({"data": {"locations": []}}), 100).is_empty());
     }
 
@@ -1078,6 +1120,7 @@ mod tests {
                 gpu_v0_name: "geforcertx4090-pcie-24gb".into(),
                 vcpu_count: 8,
                 ram_gb: 32,
+                use_dedicated_ip: true,
             },
             50,
             "Noland",
@@ -1092,6 +1135,40 @@ mod tests {
             1
         );
         assert_eq!(attributes["location_id"], "loc-1");
+    }
+
+    #[test]
+    fn port_forwarded_payload_forwards_ssh_wireguard_and_probe() {
+        let payload = create_instance_payload(
+            &TensorDockOfferRef {
+                location_id: "loc-1".into(),
+                gpu_v0_name: "geforcertx4090-pcie-24gb".into(),
+                vcpu_count: 8,
+                ram_gb: 32,
+                use_dedicated_ip: false,
+            },
+            200,
+            "Noland",
+            "ssh-ed25519 AAAA",
+        );
+        let attributes = &payload["data"]["attributes"];
+        assert!(attributes.get("useDedicatedIp").is_none());
+        assert_eq!(
+            attributes["port_forwards"],
+            json!([
+                { "internal_port": 22, "external_port": 0 },
+                { "internal_port": 51820, "external_port": 0 },
+                { "internal_port": 6201, "external_port": 0 }
+            ])
+        );
+    }
+
+    #[test]
+    fn offer_refs_saved_before_port_forwarding_default_to_dedicated_ip() {
+        let offer_ref: TensorDockOfferRef =
+            serde_json::from_str(r#"{"locationId":"l","gpuV0Name":"g","vcpuCount":8,"ramGb":32}"#)
+                .unwrap();
+        assert!(offer_ref.use_dedicated_ip);
     }
 
     #[test]

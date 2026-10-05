@@ -1301,7 +1301,7 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
     let endpoint_port = instance.wireguard_port;
     if endpoint_host.trim().is_empty() || endpoint_port == 0 {
         return Err(AppError::Provisioning(format!(
-            "Instance {} does not expose a valid WireGuard endpoint on Vast (host='{}' port={}). Pick a VM-enabled offer with direct UDP ports.",
+            "Instance {} does not expose a reachable WireGuard UDP endpoint (host='{}' port={}). Pick a VM offer with a dedicated IP or forwarded UDP ports.",
             instance.id, endpoint_host, endpoint_port
         )));
     }
@@ -2300,7 +2300,7 @@ async fn run_existing_instance_orchestration(
     let endpoint_port = instance.wireguard_port;
     if endpoint_host.trim().is_empty() || endpoint_port == 0 {
         return Err(AppError::Provisioning(format!(
-            "Instance {} does not expose a valid WireGuard endpoint on Vast (host='{}' port={}). Pick a VM-enabled offer with direct UDP ports.",
+            "Instance {} does not expose a reachable WireGuard UDP endpoint (host='{}' port={}). Pick a VM offer with a dedicated IP or forwarded UDP ports.",
             instance.id, endpoint_host, endpoint_port
         )));
     }
