@@ -71,6 +71,18 @@ export async function getAppState(): Promise<PersistedAppState> {
   return invokeSafe<PersistedAppState>("get_app_state");
 }
 
+export async function saveServerPreset(name: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("save_server_preset", { name });
+}
+
+export async function deleteServerPreset(presetId: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("delete_server_preset", { presetId });
+}
+
+export async function applyServerPreset(presetId: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("apply_server_preset", { presetId });
+}
+
 export async function getSpendSummary(): Promise<SpendSummary> {
   return invokeSafe<SpendSummary>("get_spend_summary");
 }

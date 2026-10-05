@@ -726,7 +726,16 @@ export interface PersistedAppState {
   postWireguardSetup: PostWireGuardSetupState;
   orchestrationState: OrchestrationState;
   connectionProvider: ConnectionProvider;
+  serverPresets?: ServerPreset[];
   lastError: string | null;
+}
+
+export interface ServerPreset {
+  id: string;
+  name: string;
+  createdAt: string;
+  serverPreferences: ServerPreferences;
+  stream: { bitrate: number; fps: number; width: number; height: number };
 }
 
 export interface LifecycleRankedApp {

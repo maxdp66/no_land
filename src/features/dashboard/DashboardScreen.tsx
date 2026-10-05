@@ -49,6 +49,8 @@ import { InstanceUploadModal } from "./InstanceUploadModal";
 
 import { TutorialModal } from "../onboarding/TutorialModal";
 import { SpendPanel } from "../spend/SpendPanel";
+import { PresetsCard } from "../presets/PresetsCard";
+import { useAppStore } from "../../store/appStore";
 import { useSpendSummary } from "../spend/useSpendSummary";
 import { tutorialSteps } from "../onboarding/tutorialSteps";
 
@@ -653,6 +655,26 @@ export function DashboardScreen({
 
         <section>
           <SpendPanel summary={spendSummary} />
+        </section>
+
+        <section>
+          <PresetsCard
+            presets={appState.serverPresets ?? []}
+            busy={busy}
+            onStateChange={(next) => useAppStore.setState({ appState: next })}
+            onSearchOffers={async () => {
+              await onSearchOffers(1);
+              return useAppStore.getState().offers;
+            }}
+            onRentOffer={async (offer, storageGb) => {
+              const selected = await onSelectOffer(offer.id, storageGb);
+              if (!selected) {
+                return;
+              }
+              await onStartPlay();
+              navigate("/provisioning");
+            }}
+          />
         </section>
 
         <section>

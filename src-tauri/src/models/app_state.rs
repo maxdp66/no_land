@@ -42,6 +42,8 @@ pub struct PersistedAppState {
     pub connection_provider: ConnectionProvider,
     #[serde(default)]
     pub spend: crate::models::spend::SpendState,
+    #[serde(default)]
+    pub server_presets: Vec<crate::models::presets::ServerPreset>,
     /// Local id ↔ provider id links for non-Vast instances.
     #[serde(default)]
     pub provider_instance_refs: Vec<crate::models::provider::ProviderInstanceRef>,
@@ -75,6 +77,7 @@ impl Default for PersistedAppState {
             orchestration_state: OrchestrationState::Idle,
             connection_provider: ConnectionProvider::default(),
             spend: crate::models::spend::SpendState::default(),
+            server_presets: Vec::new(),
             provider_instance_refs: Vec::new(),
             last_error: None,
         }

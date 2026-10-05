@@ -25,6 +25,8 @@ Top-level fields:
 - `postWireguardSetup`
 - `orchestrationState`
 - `spend` (see `docs/spend-tracking.md`)
+- `serverPresets`: saved server preferences + stream quality (`models/presets.rs`)
+- `providerInstanceRefs`: local id ↔ provider id links (see `docs/providers.md`)
 - `lastError`
 
 Storage file path is managed by `JsonStateStore` and defaults to app data `state.json`.

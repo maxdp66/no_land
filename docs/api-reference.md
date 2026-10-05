@@ -21,6 +21,12 @@ The UI uses wrappers in `src/lib/backend.ts`, which map to Tauri commands in `sr
 - `update_vast_api_key`
 - `update_tensordock_api_key` (verifies the key; empty string removes it)
 
+## Saved setups (presets)
+
+- `save_server_preset` (name; replaces a preset with the same name, max 20)
+- `delete_server_preset`
+- `apply_server_preset` (copies server preferences and stream bitrate/fps/resolution, clears the selected offer)
+
 ## Spend and budget
 
 - `get_spend_summary`

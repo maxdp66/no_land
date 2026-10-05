@@ -2,6 +2,7 @@ pub mod auto_shutdown;
 pub mod connection;
 pub mod external_moonlight;
 pub mod launch_library;
+pub mod presets;
 pub mod shared_storage;
 pub mod spend;
 
@@ -21,6 +22,7 @@ pub use self::launch_library::{
     get_instance_launch_library, get_launch_instance_software_job, get_software_artwork,
     launch_instance_software, update_igdb_credentials,
 };
+pub use self::presets::{apply_server_preset, delete_server_preset, save_server_preset};
 pub use self::spend::{get_spend_summary, update_budget_settings};
 pub use self::shared_storage::{
     begin_oauth_authorization, cancel_oauth_authorization, complete_oauth_authorization,
