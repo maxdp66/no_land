@@ -22,6 +22,7 @@ import {
   setManualLocation,
   setupWireguardClient,
   reconnectLocalWireguardClientQuick,
+  disconnectLocalWireguardClient,
   setupWireguardAppHandoff,
   resumeProvisioningExistingInstance,
   startPlayExistingInstance,
@@ -230,6 +231,7 @@ interface AppStore {
   }) => Promise<void>;
   setupLocalWireguardClient: () => Promise<void>;
   reconnectLocalWireguardClient: () => Promise<string | null>;
+  disconnectLocalWireguardClient: () => Promise<string | null>;
   setupWireguardAppHandoff: () => Promise<PostWireGuardSetupState | null>;
   verifyWireguardConnection: () => Promise<ReachabilityResult | null>;
   verifySunshine: () => Promise<SunshineVerificationResult | null>;
@@ -1696,6 +1698,23 @@ export const useAppStore = create<AppStore>((set, get) => {
         },
         async () => {
           const result = await reconnectLocalWireguardClientQuick();
+          const appState = await getAppState();
+          set({ appState });
+          return result;
+        },
+        null,
+      );
+    },
+
+    disconnectLocalWireguardClient: async () => {
+      return await runBusyTask(
+        {
+          key: "wireguard.local.disconnect",
+          label: "Turning off managed tunnel",
+          detail: "Stopping the local GotaTun-backed tunnel.",
+        },
+        async () => {
+          const result = await disconnectLocalWireguardClient();
           const appState = await getAppState();
           set({ appState });
           return result;

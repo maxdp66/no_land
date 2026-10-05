@@ -264,6 +264,10 @@ export async function reconnectLocalWireguardClientQuick(): Promise<string> {
   return invokeSafe<string>("reconnect_local_wireguard_client_quick");
 }
 
+export async function disconnectLocalWireguardClient(): Promise<string> {
+  return invokeSafe<string>("disconnect_local_wireguard_client_command");
+}
+
 export async function setupWireguardAppHandoff(): Promise<PostWireGuardSetupState> {
   return invokeSafe<PostWireGuardSetupState>(
     "setup_wireguard_app_handoff_command",
