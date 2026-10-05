@@ -185,6 +185,12 @@ fn get_vast_api_key(state: &PersistedAppState) -> &str {
 fn set_vast_api_key(state: &mut PersistedAppState, value: String) {
     state.credentials.vast_api_key = value;
 }
+fn get_tensordock_api_key(state: &PersistedAppState) -> &str {
+    &state.credentials.tensordock_api_key
+}
+fn set_tensordock_api_key(state: &mut PersistedAppState, value: String) {
+    state.credentials.tensordock_api_key = value;
+}
 fn get_twitch_client_secret(state: &PersistedAppState) -> &str {
     &state.credentials.twitch_client_secret
 }
@@ -223,6 +229,13 @@ const SECRET_FIELDS: &[SecretField] = &[
         nullable: false,
         get: get_vast_api_key,
         set: set_vast_api_key,
+    },
+    SecretField {
+        account: "credentials.tensordockApiKey",
+        json_path: &["credentials", "tensordockApiKey"],
+        nullable: false,
+        get: get_tensordock_api_key,
+        set: set_tensordock_api_key,
     },
     SecretField {
         account: "credentials.twitchClientSecret",
@@ -963,6 +976,7 @@ mod tests {
         state.credentials.app_password = "app-secret".to_string();
         state.credentials.vast_api_key = "vast-secret".to_string();
         state.credentials.twitch_client_secret = "twitch-secret".to_string();
+        state.credentials.tensordock_api_key = "tensordock-secret".to_string();
         state.shared_storage.settings.backblaze_application_key = "b2-secret".to_string();
         state.shared_storage.settings.crypt_password = Some("crypt-secret".to_string());
         state
@@ -974,6 +988,7 @@ mod tests {
             "app-secret",
             "vast-secret",
             "twitch-secret",
+            "tensordock-secret",
             "b2-secret",
             "crypt-secret",
         ] {
@@ -1015,6 +1030,7 @@ mod tests {
         assert_eq!(loaded.credentials.app_password, "app-secret");
         assert_eq!(loaded.credentials.vast_api_key, "vast-secret");
         assert_eq!(loaded.credentials.twitch_client_secret, "twitch-secret");
+        assert_eq!(loaded.credentials.tensordock_api_key, "tensordock-secret");
         assert_eq!(
             loaded.shared_storage.settings.backblaze_application_key,
             "b2-secret"

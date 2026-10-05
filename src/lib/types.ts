@@ -280,6 +280,7 @@ export interface CredentialsState {
   vastApiKey: string;
   twitchClientId: string;
   twitchClientSecret: string;
+  tensordockApiKey?: string;
 }
 
 export interface SshState {
@@ -356,6 +357,9 @@ export interface OfferCandidate {
   offerType: string;
   hasStaticIp: boolean;
   hasAvx: boolean;
+  /** GPU provider: "vast" or "tensordock". */
+  provider?: string;
+  providerOfferRef?: string;
 }
 
 export interface InstanceState {
@@ -759,6 +763,7 @@ export interface OnboardingPayload {
   appUsername: string;
   appPassword: string;
   vastApiKey: string;
+  tensordockApiKey?: string;
 }
 
 export interface ManualLocationInput {

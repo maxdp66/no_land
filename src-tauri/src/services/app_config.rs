@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub min_host_reliability: f64,
     pub offers_search_limit: usize,
     pub vast_base_url: String,
+    pub tensordock_base_url: String,
     pub poll_interval: Duration,
     pub poll_max_attempts: usize,
     pub ssh_connect_probe_attempts: usize,
@@ -91,6 +92,9 @@ impl Default for AppConfig {
                 .unwrap_or(500),
             vast_base_url: env::var("NOLAND_VAST_BASE_URL")
                 .unwrap_or_else(|_| "https://console.vast.ai".to_string()),
+            tensordock_base_url: env::var("NOLAND_TENSORDOCK_BASE_URL").unwrap_or_else(|_| {
+                crate::services::tensordock_api::DEFAULT_TENSORDOCK_BASE_URL.to_string()
+            }),
             poll_interval: Duration::from_secs(60),
             poll_max_attempts: 120, // 120 minutes max for slow-boot high-RAM machines
             ssh_connect_probe_attempts: 60, // More lenient SSH probing

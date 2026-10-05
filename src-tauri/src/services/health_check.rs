@@ -210,6 +210,17 @@ async fn vast_probe(
     state: &PersistedAppState,
     vast_base_url: &str,
 ) -> HealthProbe {
+    if state.credentials.vast_api_key.trim().is_empty()
+        && !state.credentials.tensordock_api_key.trim().is_empty()
+    {
+        return ok_probe(
+            "vast.credentials",
+            "Vast.ai API key",
+            "vast",
+            "Vast.ai is not configured; TensorDock is used for GPU servers.",
+            None,
+        );
+    }
     if state.credentials.vast_api_key.trim().is_empty() {
         return failed_probe(
             "vast.credentials",

@@ -21,8 +21,8 @@ use crate::{
         vast::VastInstance,
     },
     services::{
-        app_context::AppContext, instance_lifecycle::InstanceLifecycleService,
-        vast_api::VastApiClient,
+        app_context::AppContext, cloud_provider::CloudClient,
+        instance_lifecycle::InstanceLifecycleService,
     },
 };
 
@@ -41,9 +41,10 @@ pub struct SpendAlert {
     pub message: String,
 }
 
-/// Whether a Vast status is billed at the full hourly price. Loading
-/// instances are counted as running because Vast bills GPU time from start.
-pub fn vast_status_is_billed_as_running(status: &str) -> bool {
+/// Whether an instance status is billed at the full hourly price. Loading
+/// instances are counted as running because providers bill GPU time from
+/// start.
+pub fn status_is_billed_as_running(status: &str) -> bool {
     let status = status.trim().to_ascii_lowercase();
     if status.contains("inactive")
         || status.contains("stop")
@@ -57,12 +58,12 @@ pub fn vast_status_is_billed_as_running(status: &str) -> bool {
         .any(|state| status.contains(state))
 }
 
-pub fn observations_from_vast(instances: &[VastInstance]) -> Vec<SpendObservation> {
+pub fn observations_from_instances(instances: &[VastInstance]) -> Vec<SpendObservation> {
     instances
         .iter()
         .filter(|instance| !instance.status.to_ascii_lowercase().contains("destroy"))
         .map(|instance| SpendObservation {
-            provider: "vast".to_string(),
+            provider: instance.provider.clone(),
             instance_id: instance.id,
             label: if instance.label.trim().is_empty() {
                 format!("Instance {}", instance.id)
@@ -70,7 +71,7 @@ pub fn observations_from_vast(instances: &[VastInstance]) -> Vec<SpendObservatio
                 instance.label.clone()
             },
             gpu_name: instance.gpu_name.clone(),
-            running: vast_status_is_billed_as_running(&instance.status),
+            running: status_is_billed_as_running(&instance.status),
             hourly_price: instance.hourly_price,
             storage_hourly_price: instance.storage_hourly_price,
         })
@@ -87,16 +88,10 @@ pub async fn run_spend_tracking(app: AppHandle, context: AppContext) {
 }
 
 async fn tick(app: &AppHandle, context: &AppContext) {
-    let api_key = context.state.read().await.credentials.vast_api_key.clone();
-    if api_key.trim().is_empty() {
+    let Ok(cloud) = CloudClient::from_context(context).await else {
         return;
-    }
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        api_key,
-    );
-    let instances = match vast.list_instances().await {
+    };
+    let instances = match cloud.list_instances().await {
         Ok(instances) => instances,
         Err(error) => {
             // A failed listing must not be mistaken for "every instance was
@@ -105,7 +100,7 @@ async fn tick(app: &AppHandle, context: &AppContext) {
             return;
         }
     };
-    let observations = observations_from_vast(&instances);
+    let observations = observations_from_instances(&instances);
     record_and_enforce(app, context, observations).await;
 }
 
@@ -241,10 +236,10 @@ mod tests {
     #[test]
     fn vast_statuses_map_to_billing_state() {
         for status in ["running", "loading", "Running", "creating"] {
-            assert!(vast_status_is_billed_as_running(status), "{status}");
+            assert!(status_is_billed_as_running(status), "{status}");
         }
         for status in ["exited", "stopped", "inactive", "offline", ""] {
-            assert!(!vast_status_is_billed_as_running(status), "{status}");
+            assert!(!status_is_billed_as_running(status), "{status}");
         }
     }
 
@@ -261,7 +256,7 @@ mod tests {
             .unwrap()
         };
         let observations =
-            observations_from_vast(&[instance(1, "running"), instance(2, "destroying")]);
+            observations_from_instances(&[instance(1, "running"), instance(2, "destroying")]);
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].label, "Instance 1");
         assert!(observations[0].running);

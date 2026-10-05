@@ -34,3 +34,4 @@ export const PROVISIONING_ORDER = [
   "MoonlightSunshinePaired",
   "Ready",
 ] as const;
+export const TENSORDOCK_API_KEY_URL = "https://dashboard.tensordock.com/api";

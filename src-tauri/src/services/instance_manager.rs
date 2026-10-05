@@ -8,7 +8,8 @@ use crate::{
     models::vast::VastInstance,
 };
 
-use super::vast_api::VastApiClient;
+use super::cloud_provider::CloudClient;
+use crate::models::app_state::OfferCandidate;
 
 #[derive(Debug, Clone)]
 pub struct InstanceManager {
@@ -19,25 +20,27 @@ pub struct InstanceManager {
 impl InstanceManager {
     pub async fn create_instance(
         &self,
-        api: &VastApiClient,
-        offer_id: u64,
+        api: &CloudClient,
+        offer: &OfferCandidate,
         template_hash: &str,
         storage_gb: u32,
         env_vars: Option<serde_json::Value>,
+        ssh_public_key: &str,
     ) -> AppResult<VastInstance> {
         api.create_instance(
-            offer_id,
+            offer,
             template_hash,
             storage_gb,
             "Noland Connect Session",
             env_vars,
+            ssh_public_key,
         )
         .await
     }
 
     pub async fn wait_until_ssh_ready<F>(
         &self,
-        api: &VastApiClient,
+        api: &CloudClient,
         instance_id: u64,
         mut on_poll: F,
         should_cancel: impl Fn() -> bool,

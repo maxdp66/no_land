@@ -361,6 +361,10 @@ export async function setInstancePerformanceOverlay(instanceId: number, enabled:
   return invokeSafe<boolean>("set_instance_performance_overlay", { instanceId, enabled });
 }
 
+export async function updateTensordockApiKey(apiKey: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("update_tensordock_api_key", { apiKey });
+}
+
 export async function updateVastApiKey(
   apiKey: string,
 ): Promise<PersistedAppState> {

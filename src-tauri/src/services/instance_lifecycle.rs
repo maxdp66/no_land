@@ -24,7 +24,7 @@ use super::{
     app_context::AppContext,
     remote_exec::RemoteExec,
     shared_storage::shared_storage_manager::SharedStorageManager,
-    vast_api::VastApiClient,
+    cloud_provider::CloudClient,
     wireguard::{remove_local_wireguard_config, teardown_local_wireguard_client},
 };
 
@@ -347,22 +347,7 @@ impl InstanceLifecycleService {
             // Run backup first if shared storage is configured
             Self::maybe_run_backup_first(context, instance_id).await?;
 
-            let api_key = {
-                let state = context.state.read().await;
-                state.credentials.vast_api_key.clone()
-            };
-
-            if api_key.trim().is_empty() {
-                return Err(AppError::InvalidInput(
-                    "Vast API key is missing.".to_string(),
-                ));
-            }
-
-            let vast = VastApiClient::new(
-                context.http_client.clone(),
-                context.config.vast_base_url.clone(),
-                api_key,
-            );
+            let vast = CloudClient::from_context(context).await?;
 
             vast.pause_instance(instance_id).await?;
             info!(instance_id = instance_id, "Instance paused successfully");
@@ -400,22 +385,7 @@ impl InstanceLifecycleService {
                 (path, should_clear_active)
             };
 
-            let api_key = {
-                let state = context.state.read().await;
-                state.credentials.vast_api_key.clone()
-            };
-
-            if api_key.trim().is_empty() {
-                return Err(AppError::InvalidInput(
-                    "Vast API key is missing.".to_string(),
-                ));
-            }
-
-            let vast = VastApiClient::new(
-                context.http_client.clone(),
-                context.config.vast_base_url.clone(),
-                api_key,
-            );
+            let vast = CloudClient::from_context(context).await?;
 
             vast.destroy_instance(instance_id).await?;
 
@@ -521,7 +491,6 @@ impl InstanceLifecycleService {
                 .backblaze_application_key
                 .trim()
                 .is_empty();
-        let api_key = state.credentials.vast_api_key.clone();
         let has_profile = !state.shared_storage_profiles.is_empty();
         drop(state);
 
@@ -546,18 +515,8 @@ impl InstanceLifecycleService {
             "Running backup before instance lifecycle action"
         );
 
-        if api_key.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "Vast API key is missing for pre-action backup.".to_string(),
-            ));
-        }
-
         // Build RemoteExec for the target instance (not global active instance).
-        let vast = VastApiClient::new(
-            context.http_client.clone(),
-            context.config.vast_base_url.clone(),
-            api_key,
-        );
+        let vast = CloudClient::from_context(context).await?;
         let remote = build_remote_exec_for_instance(context, &vast, instance_id).await?;
         let target_user = context.config.audio_target_user.clone();
 
@@ -691,18 +650,7 @@ impl InstanceLifecycleService {
         instance_id: u64,
     ) -> AppResult<crate::models::app_state::BackupStatusResponse> {
         let _ = (context, instance_id);
-        let api_key = {
-            let state = context.state.read().await;
-            state.credentials.vast_api_key.clone()
-        };
-        if api_key.trim().is_empty() {
-            return Err(AppError::InvalidInput("Vast API key is missing.".into()));
-        }
-        let vast = VastApiClient::new(
-            context.http_client.clone(),
-            context.config.vast_base_url.clone(),
-            api_key,
-        );
+        let vast = CloudClient::from_context(context).await?;
         let remote = build_remote_exec_for_instance(context, &vast, instance_id).await?;
         let target_user = context.config.audio_target_user.clone();
         SharedStorageManager::trigger_backup(
@@ -737,22 +685,7 @@ impl InstanceLifecycleService {
             instance_id = instance_id,
             "instance lifecycle list_shared_storage_objects start"
         );
-        let api_key = {
-            let state = context.state.read().await;
-            state.credentials.vast_api_key.clone()
-        };
-
-        if api_key.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "Vast API key is missing.".to_string(),
-            ));
-        }
-
-        let vast = VastApiClient::new(
-            context.http_client.clone(),
-            context.config.vast_base_url.clone(),
-            api_key,
-        );
+        let vast = CloudClient::from_context(context).await?;
 
         let remote = build_remote_exec_for_instance(context, &vast, instance_id).await?;
         let target_user = context.config.audio_target_user.clone();
@@ -778,22 +711,7 @@ impl InstanceLifecycleService {
             selected_count = selected_paths.len(),
             "instance lifecycle sync_selected start"
         );
-        let api_key = {
-            let state = context.state.read().await;
-            state.credentials.vast_api_key.clone()
-        };
-
-        if api_key.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "Vast API key is missing.".to_string(),
-            ));
-        }
-
-        let vast = VastApiClient::new(
-            context.http_client.clone(),
-            context.config.vast_base_url.clone(),
-            api_key,
-        );
+        let vast = CloudClient::from_context(context).await?;
 
         let remote = build_remote_exec_for_instance(context, &vast, instance_id).await?;
         let target_user = context.config.audio_target_user.clone();
@@ -818,21 +736,7 @@ impl InstanceLifecycleService {
         context: &AppContext,
         instance_id: u64,
     ) -> AppResult<Vec<crate::models::app_state::SharedStorageObjectEntry>> {
-        let api_key = {
-            let state = context.state.read().await;
-            state.credentials.vast_api_key.clone()
-        };
-        if api_key.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "Vast API key is missing.".to_string(),
-            ));
-        }
-
-        let vast = VastApiClient::new(
-            context.http_client.clone(),
-            context.config.vast_base_url.clone(),
-            api_key,
-        );
+        let vast = CloudClient::from_context(context).await?;
 
         let remote = build_remote_exec_for_instance(context, &vast, instance_id).await?;
         let target_user = context.config.audio_target_user.clone();
@@ -845,21 +749,7 @@ impl InstanceLifecycleService {
         selected_paths: Vec<String>,
         performance_mode: BackupPerformanceMode,
     ) -> AppResult<String> {
-        let api_key = {
-            let state = context.state.read().await;
-            state.credentials.vast_api_key.clone()
-        };
-        if api_key.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "Vast API key is missing.".to_string(),
-            ));
-        }
-
-        let vast = VastApiClient::new(
-            context.http_client.clone(),
-            context.config.vast_base_url.clone(),
-            api_key,
-        );
+        let vast = CloudClient::from_context(context).await?;
 
         let remote = build_remote_exec_for_instance(context, &vast, instance_id).await?;
         let target_user = context.config.audio_target_user.clone();
@@ -891,18 +781,7 @@ impl InstanceLifecycleService {
                 "The running shared storage operation belongs to a different instance.".into(),
             ));
         }
-        let api_key = {
-            let state = context.state.read().await;
-            state.credentials.vast_api_key.clone()
-        };
-        if api_key.trim().is_empty() {
-            return Err(AppError::InvalidInput("Vast API key is missing.".into()));
-        }
-        let vast = VastApiClient::new(
-            context.http_client.clone(),
-            context.config.vast_base_url.clone(),
-            api_key,
-        );
+        let vast = CloudClient::from_context(context).await?;
         let remote = build_remote_exec_for_instance(context, &vast, instance_id).await?;
         let target_user = context.config.audio_target_user.clone();
         crate::services::shared_storage::agent_runtime::ensure_state_agent(&remote, &target_user)
@@ -925,7 +804,7 @@ impl InstanceLifecycleService {
 
 pub async fn build_remote_exec_for_instance(
     context: &AppContext,
-    vast: &VastApiClient,
+    vast: &CloudClient,
     instance_id: u64,
 ) -> AppResult<RemoteExec> {
     let state = context.state.read().await.clone();

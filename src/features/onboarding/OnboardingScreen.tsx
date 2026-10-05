@@ -21,6 +21,7 @@ interface FormState {
   appUsername: string;
   appPassword: string;
   vastApiKey: string;
+  tensordockApiKey: string;
 }
 
 export function OnboardingScreen({ busy, onSubmit }: Props) {
@@ -31,12 +32,15 @@ export function OnboardingScreen({ busy, onSubmit }: Props) {
     appUsername: "",
     appPassword: "",
     vastApiKey: "",
+    tensordockApiKey: "",
   });
   const [touched, setTouched] = useState<Record<keyof FormState, boolean>>({
     appUsername: false,
     appPassword: false,
     vastApiKey: false,
+    tensordockApiKey: false,
   });
+  const [showTensorDock, setShowTensorDock] = useState(false);
 
 
   const errors = useMemo(() => {
@@ -45,8 +49,7 @@ export function OnboardingScreen({ busy, onSubmit }: Props) {
         form.appUsername.trim().length < 3 ? "Use at least 3 characters" : "",
       appPassword:
         form.appPassword.length < 6 ? "Use at least 6 characters" : "",
-      vastApiKey:
-        form.vastApiKey.trim().length < 16 ? "API key seems too short" : "",
+      ...providerKeyErrors(form.vastApiKey, form.tensordockApiKey),
     };
   }, [form]);
 
@@ -57,6 +60,7 @@ export function OnboardingScreen({ busy, onSubmit }: Props) {
       appUsername: true,
       appPassword: true,
       vastApiKey: true,
+      tensordockApiKey: true,
     });
     if (hasErrors) {
       return;
@@ -66,6 +70,7 @@ export function OnboardingScreen({ busy, onSubmit }: Props) {
       appUsername: form.appUsername.trim(),
       appPassword: form.appPassword,
       vastApiKey: form.vastApiKey.trim(),
+      tensordockApiKey: form.tensordockApiKey.trim(),
     });
   }
 
@@ -228,6 +233,29 @@ export function OnboardingScreen({ busy, onSubmit }: Props) {
               }
               error={touched.vastApiKey ? errors.vastApiKey : undefined}
             />
+            {showTensorDock ? (
+              <InputField
+                label="TensorDock API Key (optional)"
+                type="password"
+                placeholder="Leave empty to use Vast.ai only"
+                value={form.tensordockApiKey}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, tensordockApiKey: event.target.value }))
+                }
+                onBlur={() =>
+                  setTouched((prev) => ({ ...prev, tensordockApiKey: true }))
+                }
+                error={touched.tensordockApiKey ? errors.tensordockApiKey : undefined}
+              />
+            ) : (
+              <button
+                type="button"
+                className="self-start font-display text-[10px] uppercase tracking-[0.12em] text-neon-cyan hover:text-[#99f8ff]"
+                onClick={() => setShowTensorDock(true)}
+              >
+                + Also use TensorDock
+              </button>
+            )}
           </div>
 
           <div className="mt-5 flex items-center justify-between gap-3">
@@ -264,4 +292,17 @@ export function OnboardingScreen({ busy, onSubmit }: Props) {
 
     </main>
   );
+}
+
+/** At least one provider key is required; any key given must look valid. */
+export function providerKeyErrors(vastApiKey: string, tensordockApiKey: string) {
+  const vast = vastApiKey.trim();
+  const tensordock = tensordockApiKey.trim();
+  if (!vast && !tensordock) {
+    return { vastApiKey: "Add a Vast.ai API key (or a TensorDock key below)", tensordockApiKey: "" };
+  }
+  return {
+    vastApiKey: vast && vast.length < 16 ? "API key seems too short" : "",
+    tensordockApiKey: tensordock && tensordock.length < 16 ? "API key seems too short" : "",
+  };
 }

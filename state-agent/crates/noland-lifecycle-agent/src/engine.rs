@@ -403,6 +403,8 @@ impl LifecycleEngine {
                 instance_id: config.instance_id,
                 action: config.provider_action,
                 api_key: capability.provider.api_key.clone(),
+                kind: config.provider_kind,
+                remote_instance_id: capability.provider.remote_instance_id.clone(),
             };
             match self.provider.apply(request).await {
                 Ok(()) => {
@@ -863,6 +865,7 @@ mod tests {
                 api_key: "secret".into(),
                 instance_id: 42,
                 action: ProviderAction::Destroy,
+                remote_instance_id: String::new(),
             },
         }
     }

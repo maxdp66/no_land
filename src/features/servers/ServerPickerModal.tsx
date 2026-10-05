@@ -693,6 +693,9 @@ export function ServerPickerModal({
                   </p>
 
                   <div className="mt-2 flex flex-wrap gap-1">
+                    <span className="border border-[#c79bff]/50 bg-[#c79bff]/10 px-1.5 py-0.5 text-[10px] text-[#dcc2ff]">
+                      {offer.provider === "tensordock" ? "TensorDock" : "Vast.ai"}
+                    </span>
                     {offer.isVerified && (
                       <span className="border border-neon-lime/50 bg-neon-lime/10 px-1.5 py-0.5 text-[10px] text-neon-lime">
                         ✓ Verified

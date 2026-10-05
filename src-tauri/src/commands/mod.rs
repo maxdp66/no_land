@@ -117,6 +117,7 @@ use crate::{
         sleep_inhibit::SleepInhibitService,
         ssh_keys::SshKeyService,
         sunshine::{generate_headless_edid_base64, EDID_MAX_REFRESH_HZ, EDID_MIN_REFRESH_HZ},
+        cloud_provider::{CloudClient, OfferSearch},
         vast_api::VastApiClient,
         wireguard::{
             locate_noland_net_helper_binary, locate_wintun_library,
@@ -1782,17 +1783,20 @@ pub async fn complete_onboarding(
         .ok_or_else(|| AppError::State("Unable to resolve app data directory".to_string()))?
         .to_path_buf();
 
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        payload.vast_api_key.clone(),
-    );
-
     let ssh_service = SshKeyService::new("nolandConnectSSH");
     let key_paths = ssh_service.ensure_keypair(&app_data_root).await?;
-    let uploaded = ssh_service
-        .upload_public_key_if_missing(&vast, &key_paths.public_key_path)
-        .await?;
+    let uploaded = if payload.vast_api_key.trim().is_empty() {
+        false
+    } else {
+        let vast = CloudClient::from_vast(VastApiClient::new(
+            context.http_client.clone(),
+            context.config.vast_base_url.clone(),
+            payload.vast_api_key.trim().to_string(),
+        ));
+        ssh_service
+            .upload_public_key_if_missing(&vast, &key_paths.public_key_path)
+            .await?
+    };
     let current_state = context.load_state().await;
     let existing_edid = current_state.sunshine.headless_edid_base64.clone();
     let edid_mode = current_state.sunshine.edid_mode;
@@ -1818,7 +1822,8 @@ pub async fn complete_onboarding(
             state.onboarding_completed = true;
             state.credentials.app_username = payload.app_username.clone();
             state.credentials.app_password = payload.app_password.clone();
-            state.credentials.vast_api_key = payload.vast_api_key.clone();
+            state.credentials.vast_api_key = payload.vast_api_key.trim().to_string();
+            state.credentials.tensordock_api_key = payload.tensordock_api_key.trim().to_string();
             state.ssh.key_name = "nolandConnectSSH".to_string();
             state.ssh.private_key_path = key_paths.private_key_path.display().to_string();
             state.ssh.public_key_path = key_paths.public_key_path.display().to_string();
@@ -1893,12 +1898,7 @@ pub async fn search_offers(
     context: State<'_, AppContext>,
 ) -> Result<Vec<crate::models::app_state::OfferCandidate>, FrontendError> {
     let state_snapshot = context.state.read().await.clone();
-    if state_snapshot.credentials.vast_api_key.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Missing Vast.ai API key. Complete onboarding first.".to_string(),
-        )
-        .into());
-    }
+    let cloud = CloudClient::from_context(context.inner()).await?;
 
     let requested_page_size = page_size
         .or(limit)
@@ -1921,11 +1921,6 @@ pub async fn search_offers(
         );
     }
 
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        state_snapshot.credentials.vast_api_key.clone(),
-    );
     let country_code = state_snapshot
         .server_preferences
         .geolocation_country_code
@@ -1938,16 +1933,16 @@ pub async fn search_offers(
             Some(country_code.as_str())
         };
 
-    let offers = vast
-        .search_offers(
-            state_snapshot.server_preferences.min_reliability,
-            fetch_limit,
-            state_snapshot.server_preferences.storage_gb,
+    let offers = cloud
+        .search_offers(&OfferSearch {
+            min_reliability: state_snapshot.server_preferences.min_reliability,
+            limit: fetch_limit,
+            storage_gb: state_snapshot.server_preferences.storage_gb,
             geolocation_country_code,
-            state_snapshot.server_preferences.require_verified,
-            state_snapshot.server_preferences.require_datacenter,
-            state_snapshot.server_preferences.require_avx,
-        )
+            require_verified: state_snapshot.server_preferences.require_verified,
+            require_datacenter: state_snapshot.server_preferences.require_datacenter,
+            require_avx: state_snapshot.server_preferences.require_avx,
+        })
         .await?;
 
     let selector = OfferSelector {
@@ -2029,28 +2024,17 @@ pub async fn list_available_offer_countries(
     context: State<'_, AppContext>,
 ) -> Result<Vec<crate::models::app_state::OfferCountryAvailability>, FrontendError> {
     let state_snapshot = context.state.read().await.clone();
-    if state_snapshot.credentials.vast_api_key.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Missing Vast.ai API key. Complete onboarding first.".to_string(),
-        )
-        .into());
-    }
-
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        state_snapshot.credentials.vast_api_key.clone(),
-    );
-    let offers = vast
-        .search_offers(
-            state_snapshot.server_preferences.min_reliability,
-            context.config.offers_search_limit,
-            state_snapshot.server_preferences.storage_gb,
-            None,
-            state_snapshot.server_preferences.require_verified,
-            state_snapshot.server_preferences.require_datacenter,
-            state_snapshot.server_preferences.require_avx,
-        )
+    let cloud = CloudClient::from_context(context.inner()).await?;
+    let offers = cloud
+        .search_offers(&OfferSearch {
+            min_reliability: state_snapshot.server_preferences.min_reliability,
+            limit: context.config.offers_search_limit,
+            storage_gb: state_snapshot.server_preferences.storage_gb,
+            geolocation_country_code: None,
+            require_verified: state_snapshot.server_preferences.require_verified,
+            require_datacenter: state_snapshot.server_preferences.require_datacenter,
+            require_avx: state_snapshot.server_preferences.require_avx,
+        })
         .await?;
 
     let selector = OfferSelector {
@@ -2705,38 +2689,35 @@ pub async fn get_rented_instances(
     context: State<'_, AppContext>,
     moonlight: State<'_, MoonlightManager>,
 ) -> Result<Vec<RentedInstanceSummary>, FrontendError> {
-    let state = context.state.read().await.clone();
-    if state.credentials.vast_api_key.trim().is_empty() {
+    let Ok(cloud) = CloudClient::from_context(context.inner()).await else {
         return Ok(Vec::new());
-    }
+    };
 
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        state.credentials.vast_api_key,
-    );
-
-    let list_result = vast.list_instances().await;
-    let instances_source = match list_result {
-        Ok(instances) => {
-            if let Err(error) =
-                InstanceLifecycleService::reconcile_owned_instances(context.inner(), &instances)
-                    .await
-            {
-                warn!(
-                    "get_rented_instances local state reconciliation failed (continuing): {}",
-                    error
-                );
-            }
-            instances
-        }
-        Err(error) => {
-            info!(
-                "get_rented_instances list failed; returning empty list for resilience: {}",
+    let listing = cloud.list_instances_partial().await;
+    let instances_source = if listing.failed.is_empty() {
+        if let Err(error) = InstanceLifecycleService::reconcile_owned_instances(
+            context.inner(),
+            &listing.instances,
+        )
+        .await
+        {
+            warn!(
+                "get_rented_instances local state reconciliation failed (continuing): {}",
                 error
             );
-            Vec::new()
         }
+        listing.instances
+    } else {
+        // Reconciling would delete local records for the failed provider's
+        // instances, so only show what answered.
+        for (provider, error) in &listing.failed {
+            info!(
+                "get_rented_instances: {} listing failed; showing partial results: {}",
+                provider.display_name(),
+                error
+            );
+        }
+        listing.instances
     };
 
     let state = context.state.read().await.clone();
@@ -2843,6 +2824,42 @@ pub async fn update_vast_api_key(
     let next_state = context
         .update_state(|state| {
             state.credentials.vast_api_key = trimmed;
+            state.last_error = None;
+        })
+        .await?;
+
+    Ok(next_state)
+}
+
+/// Save (or clear, with an empty string) the TensorDock API key.
+#[tauri::command]
+pub async fn update_tensordock_api_key(
+    api_key: String,
+    context: State<'_, AppContext>,
+) -> Result<PersistedAppState, FrontendError> {
+    let trimmed = api_key.trim().to_string();
+    if !trimmed.is_empty() {
+        if trimmed.len() < 16 {
+            return Err(AppError::InvalidInput("TensorDock API key looks invalid".to_string()).into());
+        }
+        crate::services::tensordock_api::TensorDockApiClient::new(
+            context.http_client.clone(),
+            context.config.tensordock_base_url.clone(),
+            trimmed.clone(),
+        )
+        .check_credentials()
+        .await
+        .map_err(|error| match error {
+            AppError::Authentication => {
+                AppError::InvalidInput("TensorDock rejected this API key".to_string())
+            }
+            other => other,
+        })?;
+    }
+
+    let next_state = context
+        .update_state(|state| {
+            state.credentials.tensordock_api_key = trimmed;
             state.last_error = None;
         })
         .await?;
@@ -3430,8 +3447,19 @@ fn validate_onboarding_payload(payload: &OnboardingPayload) -> Result<(), Fronte
             AppError::InvalidInput("Password must have at least 6 characters".to_string()).into(),
         );
     }
-    if payload.vast_api_key.trim().len() < 16 {
+    let vast_key = payload.vast_api_key.trim();
+    let tensordock_key = payload.tensordock_api_key.trim();
+    if vast_key.is_empty() && tensordock_key.is_empty() {
+        return Err(AppError::InvalidInput(
+            "Add a Vast.ai or TensorDock API key".to_string(),
+        )
+        .into());
+    }
+    if !vast_key.is_empty() && vast_key.len() < 16 {
         return Err(AppError::InvalidInput("Vast API key looks invalid".to_string()).into());
+    }
+    if !tensordock_key.is_empty() && tensordock_key.len() < 16 {
+        return Err(AppError::InvalidInput("TensorDock API key looks invalid".to_string()).into());
     }
 
     Ok(())
@@ -3779,21 +3807,10 @@ pub(crate) async fn sync_instance_connection_internal(
         ));
     }
 
-    if snapshot.credentials.vast_api_key.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Vast API key is missing. Add it in settings before syncing the connection."
-                .to_string(),
-        ));
-    }
-
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        snapshot.credentials.vast_api_key.clone(),
-    );
+    let vast = CloudClient::from_context(context).await?;
     let instance = vast.get_instance(instance_id).await.map_err(|error| {
         AppError::Provisioning(format!(
-            "Failed to refresh Vast.ai instance {} before syncing the connection: {}",
+            "Failed to refresh instance {} before syncing the connection: {}",
             instance_id, error
         ))
     })?;
@@ -4445,13 +4462,7 @@ pub async fn reboot_instance_services(
         let base_remote = remote.clone();
         let endpoint_refresh = tokio::spawn(async move {
             loop {
-                let snapshot = refresh_context.load_state().await;
-                if !snapshot.credentials.vast_api_key.trim().is_empty() {
-                    let vast = VastApiClient::new(
-                        refresh_context.http_client.clone(),
-                        refresh_context.config.vast_base_url.clone(),
-                        snapshot.credentials.vast_api_key,
-                    );
+                if let Ok(vast) = CloudClient::from_context(&refresh_context).await {
                     if let Ok(instances) = vast.list_instances().await {
                         if let Some(instance) =
                             instances.into_iter().find(|item| item.id == instance_id)
@@ -5868,20 +5879,7 @@ pub async fn refresh_state_agent_index(
     context: State<'_, AppContext>,
     instance_id: u64,
 ) -> Result<serde_json::Value, FrontendError> {
-    let api_key = {
-        let state = context.state.read().await;
-        state.credentials.vast_api_key.clone()
-    };
-    if api_key.trim().is_empty() {
-        return Err(
-            crate::errors::AppError::InvalidInput("Vast API key is missing.".to_string()).into(),
-        );
-    }
-    let vast = crate::services::vast_api::VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        api_key,
-    );
+    let vast = CloudClient::from_context(context.inner()).await?;
     let remote = crate::services::instance_lifecycle::build_remote_exec_for_instance(
         context.inner(),
         &vast,

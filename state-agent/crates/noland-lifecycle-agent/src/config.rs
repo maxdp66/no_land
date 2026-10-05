@@ -14,6 +14,15 @@ pub enum ProviderAction {
     Stop,
 }
 
+/// GPU provider that owns this VM.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderKind {
+    #[default]
+    Vast,
+    Tensordock,
+}
+
 impl ProviderAction {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -36,8 +45,10 @@ pub struct Config {
     pub activity_socket: PathBuf,
     pub database_path: PathBuf,
     pub capability_path: PathBuf,
+    /// Provider API base URL (kept as `vastBaseUrl` for compatibility).
     pub vast_base_url: String,
     pub provider_action: ProviderAction,
+    pub provider_kind: ProviderKind,
 }
 
 impl Default for Config {
@@ -55,6 +66,7 @@ impl Default for Config {
             capability_path: "/var/lib/noland/lifecycle/storage-capability.json".into(),
             vast_base_url: "https://console.vast.ai".into(),
             provider_action: ProviderAction::Destroy,
+            provider_kind: ProviderKind::Vast,
         }
     }
 }
@@ -139,6 +151,7 @@ mod tests {
         assert_eq!(config.backup_app_limit, 3);
         assert_eq!(config.controller_dead_zone, 0.15);
         assert_eq!(config.provider_action, ProviderAction::Destroy);
+        assert_eq!(config.provider_kind, ProviderKind::Vast);
         assert!(config.validate().is_ok());
     }
 

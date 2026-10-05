@@ -69,6 +69,8 @@ impl OfferSelector {
                     offer_type: offer.offer_type,
                     has_static_ip: offer.has_static_ip,
                     has_avx: offer.has_avx,
+                    provider: offer.provider,
+                    provider_offer_ref: offer.provider_offer_ref,
                 }
             })
             .collect::<Vec<_>>();

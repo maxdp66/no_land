@@ -16,6 +16,11 @@ The UI uses wrappers in `src/lib/backend.ts`, which map to Tauri commands in `sr
 - `select_offer`
 - `get_rented_instances`
 
+## Provider credentials
+
+- `update_vast_api_key`
+- `update_tensordock_api_key` (verifies the key; empty string removes it)
+
 ## Spend and budget
 
 - `get_spend_summary`

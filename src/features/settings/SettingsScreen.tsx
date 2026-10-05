@@ -11,6 +11,7 @@ import { InputField } from "../../components/ui/InputField";
 import { SharedStorageSettingsV2 } from "../shared-storage/SharedStorageSettingsV2";
 import { AutoShutdownSettings } from "./AutoShutdownSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { TensorDockKeySettings } from "./TensorDockKeySettings";
 import { BudgetSettings } from "../spend/BudgetSettings";
 import {
   getInstanceConnectionStatus,
@@ -678,6 +679,10 @@ export function SettingsScreen({
           </Button>
         </div>
       </div>
+      <TensorDockKeySettings
+        currentKey={appState.credentials.tensordockApiKey ?? ""}
+        busy={busy}
+      />
     </Card>
   );
 

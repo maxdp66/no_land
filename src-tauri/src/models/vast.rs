@@ -32,6 +32,11 @@ pub struct VastOffer {
     pub offer_type: String,
     pub has_static_ip: bool,
     pub has_avx: bool,
+    #[serde(default = "crate::models::provider::default_provider_name")]
+    pub provider: String,
+    /// Provider-specific data needed to rent this offer (opaque to the UI).
+    #[serde(default)]
+    pub provider_offer_ref: String,
 }
 
 impl VastOffer {
@@ -144,6 +149,8 @@ impl VastOffer {
                 .and_then(Value::as_bool)
                 .or_else(|| value.get("has_avx").and_then(Value::as_i64).map(|v| v != 0))
                 .unwrap_or(false),
+            provider: crate::models::provider::default_provider_name(),
+            provider_offer_ref: String::new(),
         })
     }
 }
@@ -219,6 +226,8 @@ pub struct VastInstance {
     pub image_runtype: String,
     #[serde(default)]
     pub hosting_type: String,
+    #[serde(default = "crate::models::provider::default_provider_name")]
+    pub provider: String,
 }
 
 impl VastInstance {
@@ -318,6 +327,7 @@ impl VastInstance {
             storage_hourly_price: storage_hourly_price(value),
             image_runtype,
             hosting_type,
+            provider: crate::models::provider::default_provider_name(),
         })
     }
 
