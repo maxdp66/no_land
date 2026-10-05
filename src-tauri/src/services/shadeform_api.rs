@@ -11,8 +11,8 @@
 //! `VastInstance` shapes, and Shadeform's UUIDs are mapped to local `u64` ids
 //! with [`foreign_local_id`], like TensorDock's.
 //!
-//! The request and response shapes follow Shadeform's v1 API as used by
-//! SkyPilot's Shadeform provider: `X-API-KEY` auth, `GET /instances/types`,
+//! The request and response shapes follow Shadeform's v1 OpenAPI spec
+//! (github.com/shadeform/docs, `openapi.yaml`): `X-API-KEY` auth, `GET /instances/types`,
 //! `POST /instances/create`, `GET /instances`, `GET /instances/{id}/info`,
 //! `POST /instances/{id}/delete`, `GET /sshkeys` and `POST /sshkeys/add`.
 //! Shadeform cannot stop an instance; it can only delete it.
@@ -290,6 +290,7 @@ pub fn create_instance_payload(
         "region": offer_ref.region,
         "shade_instance_type": offer_ref.shade_instance_type,
         "shade_cloud": true,
+        "rental_type": "on_demand",
         "name": instance_name(label),
         "ssh_key_id": ssh_key_id,
     });
@@ -530,6 +531,11 @@ pub fn parse_instance_types(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
             excluded_cloud += 1;
             continue;
         }
+        // Containers lack systemd and inbound UDP; only VMs and bare metal work.
+        if text(item, "deployment_type").eq_ignore_ascii_case("container") {
+            excluded_cloud += 1;
+            continue;
+        }
         let config = item.get("configuration").cloned().unwrap_or(Value::Null);
         let gpu_type = text(&config, "gpu_type");
         if gpu_type.is_empty() || !gpu_has_nvenc(&gpu_type) {
@@ -556,6 +562,12 @@ pub fn parse_instance_types(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
             .into_iter()
             .flatten()
         {
+            // Types that offer spot list each region twice, once per rental
+            // type, each with its own availability. Only on-demand is rented.
+            let rental_type = text(availability, "rental_type");
+            if !rental_type.is_empty() && !rental_type.eq_ignore_ascii_case("on_demand") {
+                continue;
+            }
             if availability.get("available").and_then(Value::as_bool) != Some(true) {
                 unavailable += 1;
                 continue;
@@ -648,15 +660,54 @@ fn preferred_os(options: Option<&Value>) -> Option<String> {
                 .or_else(|| option.get("name").and_then(value_as_string))
         })
         .collect::<Vec<_>>();
-    ["24.04", "24_04", "2404", "22.04", "22_04", "2204"]
+    // Shadeform names images like `ubuntu22.04_cuda12.2_shade_os` or
+    // `ubuntu_22_shade_os`; among matches for a version, take the newest CUDA.
+    [["24.04", "_24_"], ["22.04", "_22_"]]
         .iter()
-        .find_map(|version| {
-            options.iter().find(|option| {
-                let lower = option.to_ascii_lowercase();
-                lower.contains("ubuntu") && lower.contains(version)
-            })
+        .find_map(|patterns| {
+            options
+                .iter()
+                .filter(|option| {
+                    let lower = option.to_ascii_lowercase();
+                    lower.contains("ubuntu") && patterns.iter().any(|p| lower.contains(p))
+                })
+                .max_by_key(|option| cuda_version(option))
         })
         .cloned()
+}
+
+/// CUDA version in an image name (`..._cuda12.6_...` → `[12, 6]`); empty
+/// when the name has none, which ranks it below any CUDA image.
+fn cuda_version(image: &str) -> Vec<u32> {
+    let lower = image.to_ascii_lowercase();
+    let Some((_, rest)) = lower.split_once("cuda") else {
+        return Vec::new();
+    };
+    rest.split(|c: char| !c.is_ascii_digit() && c != '.')
+        .next()
+        .unwrap_or_default()
+        .split('.')
+        .filter_map(|part| part.parse().ok())
+        .collect()
+}
+
+/// `(internal, external)` pairs from an instance's `port_mappings`.
+fn port_mappings(instance: &Value) -> Vec<(u16, u16)> {
+    let port = |value: &Value, key: &str| -> Option<u16> {
+        number(value, key).and_then(|port| u16::try_from(port as u64).ok())
+    };
+    instance
+        .get("port_mappings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|mapping| {
+            Some((
+                port(mapping, "internal_port")?,
+                port(mapping, "external_port")?,
+            ))
+        })
+        .collect()
 }
 
 fn normalize_status(raw: &str) -> String {
@@ -700,6 +751,22 @@ pub fn parse_instance(value: &Value, fallback_id: Option<&str>) -> Option<Shadef
         format!("ssh -p {ssh_port} root@{ip}")
     };
     let has_ip = !ip.is_empty();
+    // Most clouds give the instance its own public IP. Some put it behind
+    // NAT and report the forwarded ports; then only those are reachable.
+    let mappings = port_mappings(value);
+    let reachable = |internal: u16| -> u16 {
+        if !has_ip {
+            0
+        } else if mappings.is_empty() {
+            internal
+        } else {
+            mappings
+                .iter()
+                .find(|(port, _)| *port == internal)
+                .map(|(_, external)| *external)
+                .unwrap_or(0)
+        }
+    };
 
     Some(ShadeformInstance {
         remote_id,
@@ -711,11 +778,10 @@ pub fn parse_instance(value: &Value, fallback_id: Option<&str>) -> Option<Shadef
             status,
             ssh_host: ip.clone(),
             ssh_port,
-            // Shadeform instances have a public IP with no port mapping.
-            wireguard_port: if has_ip { wireguard_listen_port } else { 0 },
+            wireguard_port: reachable(wireguard_listen_port),
             wireguard_listen_port,
             wireguard_host_ip: ip.clone(),
-            network_probe_port: if has_ip { network_probe_listen_port } else { 0 },
+            network_probe_port: reachable(network_probe_listen_port),
             network_probe_listen_port,
             network_probe_host_ip: ip.clone(),
             ssh_command,
@@ -882,6 +948,59 @@ mod tests {
     }
 
     #[test]
+    fn nat_port_mappings_decide_which_udp_ports_are_reachable() {
+        let body = json!({
+            "id": "c", "status": "active", "ip": "198.51.100.7", "ssh_port": 20022,
+            "port_mappings": [
+                { "internal_port": 22, "external_port": 20022 },
+                { "internal_port": 51820, "external_port": 21820 }
+            ]
+        });
+        let instance = parse_instance(&body, None).unwrap().instance;
+        assert_eq!(instance.ssh_port, 20022);
+        assert_eq!(instance.wireguard_port, 21820);
+        assert_eq!(instance.network_probe_port, 0, "unmapped behind NAT");
+    }
+
+    #[test]
+    fn spot_and_container_entries_are_skipped_and_os_prefers_newest_cuda() {
+        let body = json!({"instance_types": [
+            {
+                "cloud": "hyperstack", "shade_instance_type": "A6000", "hourly_price": 50,
+                "deployment_type": "vm",
+                "configuration": {
+                    "gpu_type": "A6000", "num_gpus": 1, "vram_per_gpu_in_gb": 48,
+                    "os_options": ["ubuntu22.04_cuda12.2_shade_os", "ubuntu22.04_cuda12.6_shade_os", "ubuntu_22_shade_os"]
+                },
+                "availability": [
+                    { "region": "canada-1", "available": false, "display_name": "Toronto, Canada", "rental_type": "on_demand" },
+                    { "region": "canada-1", "available": true, "display_name": "Toronto, Canada", "rental_type": "spot", "hourly_price": "0.30" },
+                    { "region": "norway-1", "available": true, "display_name": "Oslo, Norway", "rental_type": "on_demand" }
+                ]
+            },
+            {
+                "cloud": "somecloud", "shade_instance_type": "RTX4090", "hourly_price": 40,
+                "deployment_type": "container",
+                "configuration": { "gpu_type": "RTX4090", "num_gpus": 1 },
+                "availability": [{ "region": "us-1", "available": true, "rental_type": "on_demand" }]
+            }
+        ]});
+        let offers = parse_instance_types(&body, 100);
+        assert_eq!(
+            offers.len(),
+            1,
+            "spot-only region and container type skipped"
+        );
+        assert_eq!(offers[0].country, "NO");
+        let offer_ref: ShadeformOfferRef =
+            serde_json::from_str(&offers[0].provider_offer_ref).unwrap();
+        assert_eq!(
+            offer_ref.os.as_deref(),
+            Some("ubuntu22.04_cuda12.6_shade_os")
+        );
+    }
+
+    #[test]
     fn pending_instance_is_loading_and_deleted_is_flagged() {
         let pending =
             parse_instance(&json!({"id": "a", "status": "pending_provider"}), None).unwrap();
@@ -910,6 +1029,8 @@ mod tests {
         assert_eq!(payload["ssh_key_id"], "key-1");
         assert_eq!(payload["name"], "noland-connect-session");
         assert_eq!(payload["os"], "ubuntu22.04_cuda12.2_shade_os");
+        assert_eq!(payload["shade_cloud"], true);
+        assert_eq!(payload["rental_type"], "on_demand");
     }
 
     #[test]

@@ -51,15 +51,18 @@ the Vast key. Settings → Profile verifies a key before saving it.
 ## Shadeform flow
 
 1. Offers come from `GET /instances/types?available=true`: one per
-   instance type and available region. Prices are in cents per hour. Offers
-   are skipped when the GPU has no NVENC encoder (A100, H100, H200, GH200,
+   instance type and region with an available `on_demand` entry (types that
+   offer spot list each region again as `spot`; those are ignored). Prices are
+   in cents per hour. Offers are skipped when the type's `deployment_type` is
+   `container`, when the GPU has no NVENC encoder (A100, H100, H200, GH200,
    B200, AMD and Gaudi), when the type has more than one GPU, or when the
    underlying cloud is a container platform or one the app integrates
    directly (RunPod, Vast.ai, TensorDock). Shadeform reports no coordinates,
    so offers use their country's centroid for distance ranking.
 2. The managed SSH key is added to the Shadeform account once
    (`POST /sshkeys/add`) and reused by id for every `POST /instances/create`,
-   which also picks an Ubuntu 24.04 or 22.04 image when the type offers one.
+   which sends `shade_cloud: true` and `rental_type: on_demand` and picks an
+   Ubuntu 24.04 or 22.04 image (newest CUDA) when the type offers one.
 3. Once SSH answers, the orchestrator logs in as the instance's `ssh_user`
    (usually `shadeform`) and runs the same access bootstrap as TensorDock.
 4. Provisioning then continues exactly as for Vast.
@@ -70,10 +73,12 @@ only accepts the destroy action for it. Credentials:
 `credentials.shadeformApiKey`, stored in the OS keyring and verified in
 Settings → Profile before saving.
 
-Not yet checked against a live account: the request and response shapes
-come from SkyPilot's Shadeform provider. Before relying on it, confirm that
-the underlying cloud's firewall lets inbound UDP reach WireGuard (51820) and
-the network probe (6201); some clouds only open SSH by default.
+The request and response shapes were checked against Shadeform's official
+OpenAPI spec (`openapi.yaml` in github.com/shadeform/docs) but not against a
+live account. Shadeform applies no firewall rules of its own; its images ship
+UFW, which provisioning configures. When a cloud puts the instance behind NAT
+it reports `port_mappings`; then WireGuard (51820) and the network probe
+(6201) are only used if they are mapped.
 
 ## Troubleshooting "no offers"
 
@@ -92,9 +97,13 @@ per-country counts.
 ## Caveats
 
 TensorDock's documentation site is not reachable from the environment this
-integration was built in. The request and response shapes come from
-TensorDock's public v2 API description and a third-party OpenAPI profile, and
-have not been exercised against a live account. Before relying on it:
+integration was built in, and TensorDock publishes no spec on GitHub. The
+request and response shapes come from TensorDock's public v2 API description
+and a third-party OpenAPI profile (api-evangelist/tensordock). That profile
+does not describe `GET /api/v2/locations` at all, and is inconsistent about
+the create request's `gpus` field (a list of `{gpuV0Name, count}` in its
+schema, an object in its example). Nothing has been exercised against a live
+account. Before relying on it:
 
 - check the `gpus` shape in `create_instance_payload` (map keyed by
   `v0Name`) against a real deployment;
