@@ -361,11 +361,12 @@ Sunshine example (verify package naming/version first):
 mkdir -p ~/Downloads
 cd ~/Downloads
 
-# Verify the latest package URL before using this.
-# Use the Ubuntu 26.04 package if available.
-# If no 26.04 package exists, test the closest supported Ubuntu package.
-wget https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-ubuntu-24.04-amd64.deb
-sudo apt install -y ./sunshine-ubuntu-24.04-amd64.deb
+# Same release the app installs (src-tauri/src/services/sunshine.rs).
+# Assets are named sunshine_<version>-1+ubuntu<VERSION_ID>_<arch>.deb.
+SUNSHINE_VERSION=2026.914.233613
+wget "https://github.com/LizardByte/Sunshine/releases/download/v${SUNSHINE_VERSION}/sunshine_${SUNSHINE_VERSION}-1+ubuntu26.04_amd64.deb" \
+  -O "sunshine_${SUNSHINE_VERSION}_ubuntu26.04_amd64.deb"
+sudo apt install -y "./sunshine_${SUNSHINE_VERSION}_ubuntu26.04_amd64.deb"
 ```
 
 Enable linger for non-root runtime services:

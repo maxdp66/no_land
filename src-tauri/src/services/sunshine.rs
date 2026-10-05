@@ -461,15 +461,18 @@ case "$arch" in
   *) echo "Unsupported architecture for upstream Sunshine package: $arch" >&2; exit 1 ;;
 esac
 
-asset_pattern=""
+SUNSHINE_RELEASE_TAG="v2026.914.233613"
+SUNSHINE_VERSION="${SUNSHINE_RELEASE_TAG#v}"
+
+distro_suffix=""
 if [ "${ID:-}" = "ubuntu" ]; then
   case "${VERSION_ID:-}" in
-    22.04|24.04|26.04) asset_pattern="sunshine-ubuntu-${VERSION_ID}-${arch}\\.deb" ;;
+    22.04|24.04|26.04|26.10) distro_suffix="ubuntu${VERSION_ID}" ;;
     *) echo "Unsupported Ubuntu version for upstream Sunshine package: ${VERSION_ID:-unknown}" >&2; exit 1 ;;
   esac
 elif [ "${ID:-}" = "debian" ]; then
   case "${VERSION_CODENAME:-}" in
-    trixie) asset_pattern="sunshine-debian-trixie-${arch}\\.deb" ;;
+    trixie) distro_suffix="debiantrixie" ;;
     *) echo "Unsupported Debian codename for upstream Sunshine package: ${VERSION_CODENAME:-unknown}" >&2; exit 1 ;;
   esac
 else
@@ -477,24 +480,14 @@ else
   exit 1
 fi
 
-SUNSHINE_RELEASE_TAG="v2026.516.143833"
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 pkg_path="$tmpdir/sunshine.deb"
-release_json=$(curl -fsSL \
-  -H 'Accept: application/vnd.github+json' \
-  -H 'User-Agent: Noland-Connect' \
-  "https://api.github.com/repos/LizardByte/Sunshine/releases/tags/${SUNSHINE_RELEASE_TAG}")
-url=$(printf '%s\n' "$release_json" \
-  | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*"' \
-  | sed -E 's/.*"([^"]*)"/\1/' \
-  | grep -E -m1 "${asset_pattern}$")
-if [ -z "$url" ]; then
-  echo "No Sunshine DEB asset found for ${ID:-unknown} ${VERSION_ID:-${VERSION_CODENAME:-unknown}} ${arch}" >&2
-  exit 1
-fi
+# Release assets are named sunshine_<version>-1+<distro>_<arch>.deb; download
+# directly instead of resolving through the rate-limited GitHub API.
+url="https://github.com/LizardByte/Sunshine/releases/download/${SUNSHINE_RELEASE_TAG}/sunshine_${SUNSHINE_VERSION}-1+${distro_suffix}_${arch}.deb"
 
-curl -fsSL "$url" -o "$pkg_path"
+curl -fsSL --retry 3 "$url" -o "$pkg_path"
 # The up-front provisioning package pass already refreshed the index.
 if [ -z "$(find /var/lib/noland/apt-index-refreshed -mmin -360 2>/dev/null)" ]; then
   sudo apt-get -o DPkg::Lock::Timeout=600 update
