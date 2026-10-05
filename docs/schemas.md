@@ -24,6 +24,12 @@ Top-level fields:
 - `provisionedServers`
 - `postWireguardSetup`
 - `orchestrationState`
+- `spend` (see `docs/spend-tracking.md`)
+- `playHistory`: per-app play time, launch count and last played, attributed on the desktop from launch to stream end (`models/play_history.rs`)
+- `qualityHistory`: per-session stream quality summaries (`models/quality.rs`)
+- `priceAlerts`: GPU/region/price watches (`models/price_alerts.rs`)
+- `serverPresets`: saved server preferences + stream quality (`models/presets.rs`)
+- `providerInstanceRefs`: local id ↔ provider id links (see `docs/providers.md`)
 - `lastError`
 
 Storage file path is managed by `JsonStateStore` and defaults to app data `state.json`.

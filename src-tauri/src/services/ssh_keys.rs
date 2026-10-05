@@ -10,7 +10,7 @@ use crate::{
     utils::{managed_binaries::configure_bundled_linux_runtime, process::configure_no_window},
 };
 
-use super::{os_detection::OsDetection, vast_api::VastApiClient};
+use super::{cloud_provider::CloudClient, os_detection::OsDetection};
 
 fn locate_ssh_key_tool(tool: &str) -> Option<PathBuf> {
     let os = OsDetection::new();
@@ -142,7 +142,7 @@ impl SshKeyService {
 
     pub async fn upload_public_key_if_missing(
         &self,
-        vast_api: &VastApiClient,
+        vast_api: &CloudClient,
         public_key_path: &Path,
     ) -> AppResult<bool> {
         let public_key = fs::read_to_string(public_key_path)
@@ -153,6 +153,12 @@ impl SshKeyService {
             return Err(AppError::InvalidInput(
                 "Generated SSH public key file is empty".to_string(),
             ));
+        }
+
+        if !vast_api.has_vast() {
+            // Only Vast keeps account-level keys; others take the key when
+            // an instance is created.
+            return Ok(false);
         }
 
         let keys = vast_api.list_ssh_keys().await?;

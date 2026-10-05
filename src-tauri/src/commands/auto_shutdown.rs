@@ -7,7 +7,7 @@ use crate::{
         app_context::AppContext,
         instance_lifecycle::InstanceLifecycleService,
         lifecycle_agent::{LifecycleAgentProvisioner, LifecycleAgentStatus},
-        vast_api::VastApiClient,
+        cloud_provider::CloudClient,
     },
 };
 
@@ -70,9 +70,12 @@ fn validate_auto_shutdown_request(
         ));
     }
 
-    if state.credentials.vast_api_key.trim().is_empty() {
+    if state.credentials.vast_api_key.trim().is_empty()
+        && state.credentials.tensordock_api_key.trim().is_empty()
+    {
         return Err(AppError::InvalidInput(
-            "Add your Vast.ai API key before enabling automatic backup and shutdown.".to_string(),
+            "Add your Vast.ai or TensorDock API key before enabling automatic backup and shutdown."
+                .to_string(),
         ));
     }
 
@@ -98,16 +101,11 @@ pub async fn save_auto_shutdown_settings(
     settings: AutoShutdownSettings,
     context: State<'_, AppContext>,
 ) -> Result<PersistedAppState, FrontendError> {
-    let initial_state = context.load_state().await;
-    if settings.enabled && !initial_state.credentials.vast_api_key.trim().is_empty() {
-        let vast = VastApiClient::new(
-            context.http_client.clone(),
-            context.config.vast_base_url.clone(),
-            initial_state.credentials.vast_api_key.clone(),
-        );
-        let owned_instances = vast.list_instances().await.map_err(|error| {
+    let cloud = CloudClient::from_context(context.inner()).await.ok();
+    if let Some(cloud) = cloud.filter(|_| settings.enabled) {
+        let owned_instances = cloud.list_instances().await.map_err(|error| {
             AppError::Provisioning(format!(
-                "Could not refresh Vast.ai instances before saving automatic backup settings: {error}"
+                "Could not refresh rented instances before saving automatic backup settings: {error}"
             ))
         })?;
         InstanceLifecycleService::reconcile_owned_instances(context.inner(), &owned_instances)

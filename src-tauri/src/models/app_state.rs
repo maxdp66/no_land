@@ -40,6 +40,19 @@ pub struct PersistedAppState {
     pub orchestration_state: OrchestrationState,
     #[serde(default)]
     pub connection_provider: ConnectionProvider,
+    #[serde(default)]
+    pub spend: crate::models::spend::SpendState,
+    #[serde(default)]
+    pub server_presets: Vec<crate::models::presets::ServerPreset>,
+    #[serde(default)]
+    pub price_alerts: Vec<crate::models::price_alerts::PriceAlert>,
+    #[serde(default)]
+    pub quality_history: Vec<crate::models::quality::SessionQualityRecord>,
+    #[serde(default)]
+    pub play_history: Vec<crate::models::play_history::PlayStats>,
+    /// Local id ↔ provider id links for non-Vast instances.
+    #[serde(default)]
+    pub provider_instance_refs: Vec<crate::models::provider::ProviderInstanceRef>,
     pub last_error: Option<String>,
 }
 
@@ -69,6 +82,12 @@ impl Default for PersistedAppState {
             post_wireguard_setup: PostWireGuardSetupState::default(),
             orchestration_state: OrchestrationState::Idle,
             connection_provider: ConnectionProvider::default(),
+            spend: crate::models::spend::SpendState::default(),
+            server_presets: Vec::new(),
+            price_alerts: Vec::new(),
+            quality_history: Vec::new(),
+            play_history: Vec::new(),
+            provider_instance_refs: Vec::new(),
             last_error: None,
         }
     }
@@ -120,6 +139,8 @@ pub struct CredentialsState {
     pub twitch_client_id: String,
     #[serde(default)]
     pub twitch_client_secret: String,
+    #[serde(default)]
+    pub tensordock_api_key: String,
 }
 
 impl Default for CredentialsState {
@@ -130,6 +151,7 @@ impl Default for CredentialsState {
             vast_api_key: String::new(),
             twitch_client_id: String::new(),
             twitch_client_secret: String::new(),
+            tensordock_api_key: String::new(),
         }
     }
 }
@@ -305,6 +327,16 @@ pub struct OfferCandidate {
     pub has_static_ip: bool,
     #[serde(default)]
     pub has_avx: bool,
+    #[serde(default = "crate::models::provider::default_provider_name")]
+    pub provider: String,
+    #[serde(default)]
+    pub provider_offer_ref: String,
+    /// This user's own streaming history on this host or region.
+    #[serde(default)]
+    pub observed_quality: Option<crate::models::quality::ObservedQuality>,
+    /// Distance-based round-trip estimate, for offers without history.
+    #[serde(default)]
+    pub estimated_rtt_ms: Option<f64>,
 }
 
 /// A two-letter geolocation code with the number of rentable offers Vast
@@ -851,7 +883,10 @@ pub enum OrchestrationState {
 pub struct OnboardingPayload {
     pub app_username: String,
     pub app_password: String,
+    #[serde(default)]
     pub vast_api_key: String,
+    #[serde(default)]
+    pub tensordock_api_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -280,6 +280,7 @@ export interface CredentialsState {
   vastApiKey: string;
   twitchClientId: string;
   twitchClientSecret: string;
+  tensordockApiKey?: string;
 }
 
 export interface SshState {
@@ -356,6 +357,18 @@ export interface OfferCandidate {
   offerType: string;
   hasStaticIp: boolean;
   hasAvx: boolean;
+  /** GPU provider: "vast" or "tensordock". */
+  provider?: string;
+  providerOfferRef?: string;
+  observedQuality?: ObservedQuality | null;
+  estimatedRttMs?: number | null;
+}
+
+export interface ObservedQuality {
+  score: number;
+  sessions: number;
+  avgRttMs: number | null;
+  basis: "host" | "region";
 }
 
 export interface InstanceState {
@@ -722,7 +735,47 @@ export interface PersistedAppState {
   postWireguardSetup: PostWireGuardSetupState;
   orchestrationState: OrchestrationState;
   connectionProvider: ConnectionProvider;
+  serverPresets?: ServerPreset[];
+  priceAlerts?: PriceAlert[];
+  playHistory?: PlayStats[];
   lastError: string | null;
+}
+
+export interface PlayStats {
+  appId: string;
+  displayName: string;
+  totalPlaySeconds: number;
+  launchCount: number;
+  lastPlayedAt: string;
+}
+
+export interface PriceAlert {
+  id: string;
+  gpuQuery: string;
+  countryCode: string;
+  maxHourlyUsd: number;
+  enabled: boolean;
+  lastNotifiedAt: string | null;
+  lastNotifiedPrice: number | null;
+}
+
+export interface PriceAlertMatch {
+  alertId: string;
+  gpuQuery: string;
+  maxHourlyUsd: number;
+  offerId: number;
+  provider: string;
+  gpuName: string;
+  locationLabel: string;
+  hourlyPrice: number;
+}
+
+export interface ServerPreset {
+  id: string;
+  name: string;
+  createdAt: string;
+  serverPreferences: ServerPreferences;
+  stream: { bitrate: number; fps: number; width: number; height: number };
 }
 
 export interface LifecycleRankedApp {
@@ -759,6 +812,7 @@ export interface OnboardingPayload {
   appUsername: string;
   appPassword: string;
   vastApiKey: string;
+  tensordockApiKey?: string;
 }
 
 export interface ManualLocationInput {
@@ -1220,4 +1274,59 @@ export interface MicrophoneDevice {
   isDefault: boolean;
   sampleRates: number[];
   channels: number;
+}
+
+export interface BudgetSettings {
+  monthlyBudgetUsd: number;
+  warnAtPercent: number;
+  autoStopAtBudget: boolean;
+}
+
+export interface InstanceSpend {
+  provider: string;
+  instanceId: number;
+  label: string;
+  gpuName: string;
+  running: boolean;
+  currentHourlyUsd: number;
+  sessionUsd: number;
+  sessionStartedAt: string | null;
+  monthToDateUsd: number;
+}
+
+export interface MonthlySpend {
+  month: string;
+  totalUsd: number;
+  runningHours: number;
+}
+
+export type BudgetStatus = "disabled" | "ok" | "warning" | "exceeded";
+
+export interface SpendSummary {
+  month: string;
+  monthToDateUsd: number;
+  currentBurnUsdPerHour: number;
+  projectedMonthUsd: number;
+  budget: BudgetSettings;
+  budgetStatus: BudgetStatus;
+  budgetUsedPercent: number | null;
+  instances: InstanceSpend[];
+  months: MonthlySpend[];
+}
+
+export interface InstancePreemptedEvent {
+  instanceId: number;
+  label: string;
+  gpuName: string;
+  provider: string;
+  status: string;
+  message: string;
+}
+
+export interface SpendAlert {
+  kind: "warning" | "exceeded" | "auto_stopped" | "auto_stop_failed";
+  monthToDateUsd: number;
+  budgetUsd: number;
+  instanceId: number | null;
+  message: string;
 }

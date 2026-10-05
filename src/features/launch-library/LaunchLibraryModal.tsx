@@ -12,6 +12,11 @@ import {
   LaunchPcCard,
   SoftwareLaunchCard,
 } from "./LaunchLibraryCard";
+import { useAppStore } from "../../store/appStore";
+import type { PlayStats } from "../../lib/types";
+import { sortByRecentPlay } from "./playStats";
+
+const NO_PLAY_HISTORY: PlayStats[] = [];
 
 interface Props {
   instanceId: number;
@@ -49,6 +54,7 @@ export function LaunchLibraryModal({
   onLoadArtwork,
   onClose,
 }: Props) {
+  const playHistory = useAppStore((state) => state.appState?.playHistory ?? NO_PLAY_HISTORY);
   const [loadRequested, setLoadRequested] = useState(false);
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
@@ -81,15 +87,16 @@ export function LaunchLibraryModal({
     launchingAppId !== null || (job !== null && !isTerminalLaunchJob(job));
   const filteredItems = useMemo(() => {
     const term = search.trim().toLowerCase();
+    const items = sortByRecentPlay(library?.items ?? [], playHistory);
     if (!term) {
-      return library?.items ?? [];
+      return items;
     }
-    return (library?.items ?? []).filter((item) =>
+    return items.filter((item) =>
       [item.displayName, item.appId, ...item.aliases].some((value) =>
         value.toLowerCase().includes(term),
       ),
     );
-  }, [library?.items, search]);
+  }, [library?.items, playHistory, search]);
 
   async function launchPc() {
     onClose();
@@ -175,6 +182,7 @@ export function LaunchLibraryModal({
                     disabled={launchInProgress && !itemJob && launchingAppId !== item.appId}
                     onLoadArtwork={onLoadArtwork}
                     onLaunch={() => void onLaunchSoftware(instanceId, item.appId)}
+                    playStats={playHistory.find((entry) => entry.appId === item.appId)}
                   />
                 );
               })}

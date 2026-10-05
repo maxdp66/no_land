@@ -1,6 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { invokeSafe } from "./tauri";
 import type {
+  BudgetSettings,
+  PriceAlertMatch,
+  InstancePreemptedEvent,
+  SpendAlert,
+  SpendSummary,
   AutoShutdownSettings,
   AutoShutdownState,
   LifecycleAgentStatus,
@@ -66,6 +71,70 @@ import type {
 
 export async function getAppState(): Promise<PersistedAppState> {
   return invokeSafe<PersistedAppState>("get_app_state");
+}
+
+export async function savePriceAlert(input: {
+  gpuQuery: string;
+  countryCode: string;
+  maxHourlyUsd: number;
+}): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("save_price_alert", input);
+}
+
+export async function deletePriceAlert(alertId: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("delete_price_alert", { alertId });
+}
+
+export async function setPriceAlertEnabled(alertId: string, enabled: boolean): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("set_price_alert_enabled", { alertId, enabled });
+}
+
+export async function subscribePriceAlerts(
+  callback: (match: PriceAlertMatch) => void,
+): Promise<() => void> {
+  const unlisten = await listen<PriceAlertMatch>("price:alert", ({ payload }) => callback(payload));
+  return () => unlisten();
+}
+
+export async function saveServerPreset(name: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("save_server_preset", { name });
+}
+
+export async function deleteServerPreset(presetId: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("delete_server_preset", { presetId });
+}
+
+export async function applyServerPreset(presetId: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("apply_server_preset", { presetId });
+}
+
+export async function getSpendSummary(): Promise<SpendSummary> {
+  return invokeSafe<SpendSummary>("get_spend_summary");
+}
+
+export async function updateBudgetSettings(settings: BudgetSettings): Promise<SpendSummary> {
+  return invokeSafe<SpendSummary>("update_budget_settings", { settings });
+}
+
+export async function subscribeSpendUpdates(
+  callback: (summary: SpendSummary) => void,
+): Promise<() => void> {
+  const unlisten = await listen<SpendSummary>("spend:updated", ({ payload }) => callback(payload));
+  return () => unlisten();
+}
+
+export async function subscribeInstancePreempted(
+  callback: (event: InstancePreemptedEvent) => void,
+): Promise<() => void> {
+  const unlisten = await listen<InstancePreemptedEvent>("instance:preempted", ({ payload }) => callback(payload));
+  return () => unlisten();
+}
+
+export async function subscribeSpendAlerts(
+  callback: (alert: SpendAlert) => void,
+): Promise<() => void> {
+  const unlisten = await listen<SpendAlert>("spend:alert", ({ payload }) => callback(payload));
+  return () => unlisten();
 }
 
 export async function getAutoShutdownSettings(): Promise<AutoShutdownState> {
@@ -334,6 +403,10 @@ export async function getRentedInstances(): Promise<RentedInstanceSummary[]> {
 
 export async function setInstancePerformanceOverlay(instanceId: number, enabled: boolean): Promise<boolean> {
   return invokeSafe<boolean>("set_instance_performance_overlay", { instanceId, enabled });
+}
+
+export async function updateTensordockApiKey(apiKey: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("update_tensordock_api_key", { apiKey });
 }
 
 export async function updateVastApiKey(

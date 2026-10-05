@@ -19,6 +19,7 @@ use crate::{
             ProvisionedServerSteps,
         },
         events::ProvisioningEvent,
+        provider::CloudProviderKind,
     },
 };
 
@@ -38,7 +39,8 @@ use super::{
     shared_storage::agent_runtime::ensure_state_agent,
     ssh_keys::SshKeyService,
     sunshine::SunshineService,
-    vast_api::VastApiClient,
+    cloud_provider::CloudClient,
+    tensordock_api::{access_bootstrap_script, TENSORDOCK_DEFAULT_SSH_USER},
     wireguard::{WireGuardProvisionMode, WireGuardProvisionResult, WireGuardService},
 };
 
@@ -542,22 +544,11 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
         AppError::InvalidInput("Select a server before clicking Play".to_string())
     })?;
 
-    let api_key = initial_state.credentials.vast_api_key.clone();
-    if api_key.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Missing Vast.ai API key. Complete onboarding first.".to_string(),
-        ));
-    }
-
     let app_data_dir = context.state_store.path().parent().ok_or_else(|| {
         AppError::State("Could not resolve app data directory from state file path".to_string())
     })?;
 
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        api_key,
-    );
+    let vast = CloudClient::from_context(&context).await?;
 
     match vast.list_instances().await {
         Ok(existing_instances) => {
@@ -639,7 +630,12 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
         &app,
         &context,
         OrchestrationState::CreatingInstance,
-        "Creating Vast.ai instance",
+        &format!(
+            "Creating {} instance",
+            CloudProviderKind::parse(&offer.provider)
+                .unwrap_or_default()
+                .display_name()
+        ),
         Some(format!(
             "Offer {} using template {}",
             offer.id, initial_state.server_preferences.template_hash
@@ -673,13 +669,21 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
         "-e PASS": env_pass
     });
 
+    let ssh_public_key = fs::read_to_string(&key_paths.public_key_path).map_err(|error| {
+        AppError::State(format!(
+            "Could not read managed SSH public key {}: {error}",
+            key_paths.public_key_path.display()
+        ))
+    })?;
+
     let mut instance = match instance_manager
         .create_instance(
             &vast,
-            offer.id,
+            &offer,
             &initial_state.server_preferences.template_hash,
             initial_state.server_preferences.storage_gb,
             Some(env_vars),
+            &ssh_public_key,
         )
         .await
     {
@@ -754,7 +758,7 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
         &app,
         &context,
         OrchestrationState::CreatingInstance,
-        "Create-instance request accepted by Vast",
+        "Create-instance request accepted by provider",
         Some(format!(
             "Instance {} status {} ssh {}:{}",
             instance.id, instance.status, instance.ssh_host, instance.ssh_port
@@ -1693,22 +1697,11 @@ async fn run_existing_instance_orchestration(
 
     let initial_state = context.state.read().await.clone();
 
-    let api_key = initial_state.credentials.vast_api_key.clone();
-    if api_key.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Missing Vast.ai API key. Complete onboarding first.".to_string(),
-        ));
-    }
-
     let app_data_dir = context.state_store.path().parent().ok_or_else(|| {
         AppError::State("Could not resolve app data directory from state file path".to_string())
     })?;
 
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        api_key,
-    );
+    let vast = CloudClient::from_context(&context).await?;
 
     let offer_id = initial_state
         .instance
@@ -2644,11 +2637,70 @@ async fn run_existing_instance_orchestration(
     Ok(())
 }
 
+/// TensorDock images only authorize the deploy key for their default user.
+/// Log in as that user once and give the managed key root access (and set the
+/// desktop user's password), which Vast's template does at boot. Idempotent.
+async fn bootstrap_tensordock_access(
+    app: &AppHandle,
+    context: &AppContext,
+    remote: &RemoteExec,
+) -> AppResult<()> {
+    let password = context.state.read().await.credentials.app_password.clone();
+    let target_user = sanitize_ssh_user(&context.config.audio_target_user);
+    let script = access_bootstrap_script(&target_user, &password);
+    let mut bootstrap = remote.clone();
+    bootstrap.ssh_user = TENSORDOCK_DEFAULT_SSH_USER.to_string();
+
+    emit_transition(
+        app,
+        context,
+        OrchestrationState::ConnectingSsh,
+        "Preparing TensorDock VM access",
+        Some(format!(
+            "{}@{}:{}",
+            bootstrap.ssh_user, bootstrap.ssh_host, bootstrap.ssh_port
+        )),
+        false,
+    )
+    .await;
+
+    let mut last_stderr = String::new();
+    for attempt in 1..=context.config.ssh_connect_probe_attempts {
+        ensure_not_cancelled(context)?;
+        let output = {
+            let bootstrap = bootstrap.clone();
+            let script = script.clone();
+            tokio::task::spawn_blocking(move || bootstrap.ssh(&script, Duration::from_secs(60)))
+                .await
+                .map_err(|error| {
+                    AppError::Command(format!("TensorDock access bootstrap join failure: {error}"))
+                })??
+        };
+        if output.status_code == 0 && output.stdout.contains("NOLAND_ACCESS_READY") {
+            info!("TensorDock access bootstrap completed on attempt {attempt}");
+            return Ok(());
+        }
+        last_stderr = output.stderr.trim().to_string();
+        warn!(
+            "TensorDock access bootstrap attempt {attempt}/{} failed (status {}): {}",
+            context.config.ssh_connect_probe_attempts, output.status_code, last_stderr
+        );
+        if attempt < context.config.ssh_connect_probe_attempts {
+            sleep(context.config.ssh_connect_probe_interval).await;
+        }
+    }
+
+    Err(AppError::Provisioning(format!(
+        "Could not prepare root access on the TensorDock VM as '{}'. Last error: {last_stderr}",
+        TENSORDOCK_DEFAULT_SSH_USER
+    )))
+}
+
 async fn wait_for_ssh_acceptance(
     app: &AppHandle,
     context: &AppContext,
     remote: &RemoteExec,
-    vast: &VastApiClient,
+    vast: &CloudClient,
     instance_id: u64,
 ) -> AppResult<()> {
     ensure_private_key_path_exists(Path::new(&remote.private_key_path))?;
@@ -2668,6 +2720,10 @@ async fn wait_for_ssh_acceptance(
     ssh_service
         .load_key_into_agent(Path::new(&remote.private_key_path), &passphrase)
         .await?;
+
+    if vast.provider_for_instance(instance_id).await == Some(CloudProviderKind::Tensordock) {
+        bootstrap_tensordock_access(app, context, remote).await?;
+    }
 
     let mut resynced_after_auth_failure = false;
     let mut key_sync_warning = None;
@@ -2843,7 +2899,7 @@ async fn wait_for_ssh_acceptance(
 async fn ensure_post_nvidia_reboot(
     app: &AppHandle,
     context: &AppContext,
-    vast: &VastApiClient,
+    vast: &CloudClient,
     instance: &mut crate::models::vast::VastInstance,
     remote: &mut RemoteExec,
     offer_id: Option<u64>,
@@ -3181,7 +3237,7 @@ async fn ensure_post_nvidia_reboot(
 async fn recheck_nvidia_driver(
     app: &AppHandle,
     context: &AppContext,
-    vast: &VastApiClient,
+    vast: &CloudClient,
     instance: &mut crate::models::vast::VastInstance,
     remote: &mut RemoteExec,
     offer_id: Option<u64>,
@@ -3341,7 +3397,7 @@ fn is_inactive_instance_status(status: &str) -> bool {
 }
 
 async fn reservation_snapshot_from_list(
-    vast: &VastApiClient,
+    vast: &CloudClient,
     instance_id: u64,
 ) -> AppResult<Option<crate::models::vast::VastInstance>> {
     Ok(vast
@@ -3366,7 +3422,7 @@ fn find_active_rented_instance(
 async fn verify_instance_reserved_in_account(
     app: &AppHandle,
     context: &AppContext,
-    vast: &VastApiClient,
+    vast: &CloudClient,
     instance_id: u64,
     offer_id: Option<u64>,
 ) -> AppResult<crate::models::vast::VastInstance> {

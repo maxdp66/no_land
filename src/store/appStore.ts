@@ -45,6 +45,7 @@ import {
   updateServerPreferences,
   updateSshCredentials,
   updateVastApiKey,
+  updateTensordockApiKey,
   getSharedStorageSettings,
   saveSharedStorageSettings,
   testSharedStorageConfig,
@@ -98,6 +99,7 @@ import {
 import { PROVISIONING_ORDER } from "../lib/constants";
 import type { BlockingActionState } from "../components/ui/BlockingLoaderOverlay";
 import type {
+  InstancePreemptedEvent,
   AutoShutdownSettings,
   ManualLocationInput,
   MoonlightPreferences,
@@ -150,6 +152,9 @@ import type {
 
 interface AppStore {
   appState: PersistedAppState | null;
+  preemptedInstances: InstancePreemptedEvent[];
+  reportPreemptedInstance: (event: InstancePreemptedEvent) => void;
+  dismissPreemptedInstance: (instanceId: number) => void;
   offers: OfferCandidate[];
   rentedInstances: RentedInstanceSummary[];
   logs: ProvisioningEvent[];
@@ -206,6 +211,7 @@ interface AppStore {
   clearLaunchLibrary: () => void;
   loadRentedInstances: () => Promise<void>;
   saveVastApiKey: (apiKey: string) => Promise<void>;
+  saveTensordockApiKey: (apiKey: string) => Promise<void>;
   refreshVastWalletSummary: () => Promise<VastWalletSummary | null>;
   savePlatformCredentials: (
     payload: PlatformCredentialsUpdate,
@@ -1060,6 +1066,18 @@ export const useAppStore = create<AppStore>((set, get) => {
 
   return {
     appState: null,
+    preemptedInstances: [],
+    reportPreemptedInstance: (event) =>
+      set((state) => ({
+        preemptedInstances: [
+          ...state.preemptedInstances.filter((item) => item.instanceId !== event.instanceId),
+          event,
+        ],
+      })),
+    dismissPreemptedInstance: (instanceId) =>
+      set((state) => ({
+        preemptedInstances: state.preemptedInstances.filter((item) => item.instanceId !== instanceId),
+      })),
     offers: [],
     rentedInstances: [],
     logs: [],
@@ -1118,7 +1136,8 @@ export const useAppStore = create<AppStore>((set, get) => {
         let vastWalletSummary: VastWalletSummary | null = null;
         if (
           appState.onboardingCompleted &&
-          appState.credentials.vastApiKey.trim().length > 0
+          (appState.credentials.vastApiKey.trim().length > 0 ||
+            (appState.credentials.tensordockApiKey ?? "").trim().length > 0)
         ) {
           const [instances, wallet] = await Promise.all([
             getRentedInstances(),
@@ -1496,6 +1515,22 @@ export const useAppStore = create<AppStore>((set, get) => {
         set({ rentedInstances, busy: false });
       } catch (error) {
         set({ busy: false, error: mapError(error) });
+      }
+    },
+
+    saveTensordockApiKey: async (apiKey) => {
+      set({ busy: true, error: null });
+      try {
+        const appState = await updateTensordockApiKey(apiKey);
+        const rentedInstances = await getRentedInstances();
+        set({
+          appState,
+          rentedInstances: await enrichRentedInstancesWithEmbeddedStatus(rentedInstances),
+          busy: false,
+        });
+      } catch (error) {
+        set({ busy: false, error: mapError(error) });
+        throw error;
       }
     },
 

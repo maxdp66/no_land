@@ -11,6 +11,9 @@ import { InputField } from "../../components/ui/InputField";
 import { SharedStorageSettingsV2 } from "../shared-storage/SharedStorageSettingsV2";
 import { AutoShutdownSettings } from "./AutoShutdownSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { TensorDockKeySettings } from "./TensorDockKeySettings";
+import { ControllerTester } from "../controllers/ControllerTester";
+import { BudgetSettings } from "../spend/BudgetSettings";
 import {
   getInstanceConnectionStatus,
   repairInstanceConnection,
@@ -47,6 +50,7 @@ type SettingsSection =
   | "client"
   | "storage"
   | "connection"
+  | "budget"
   | "notifications";
 type ClientForm = {
   bitrate: string;
@@ -285,7 +289,11 @@ export function SettingsScreen({
 }: Props) {
   const [searchParams] = useSearchParams();
   const [section, setSection] = useState<SettingsSection>(() =>
-    searchParams.get("section") === "storage" ? "storage" : "profile",
+    searchParams.get("section") === "storage"
+      ? "storage"
+      : searchParams.get("section") === "budget"
+        ? "budget"
+        : "profile",
   );
   const [apiKey, setApiKey] = useState(appState.credentials.vastApiKey);
   const [platformUsername, setPlatformUsername] = useState(
@@ -672,6 +680,10 @@ export function SettingsScreen({
           </Button>
         </div>
       </div>
+      <TensorDockKeySettings
+        currentKey={appState.credentials.tensordockApiKey ?? ""}
+        busy={busy}
+      />
     </Card>
   );
 
@@ -1259,6 +1271,7 @@ export function SettingsScreen({
           Save Client Config
         </Button>
       </div>
+      <ControllerTester />
     </Card>
   );
 
@@ -1598,7 +1611,9 @@ export function SettingsScreen({
             ? connectionPanel
             : section === "notifications"
               ? notificationsPanel
-              : clientPanel;
+              : section === "budget"
+                ? <BudgetSettings />
+                : clientPanel;
 
   return (
     <main className="crt-surface min-h-dvh bg-hero-glow px-4 pb-6 pt-6 md:px-8">
@@ -1663,6 +1678,12 @@ export function SettingsScreen({
                 onClick={() => setSection("connection")}
               >
                 Connection
+              </Button>
+              <Button
+                variant={section === "budget" ? "secondary" : "ghost"}
+                onClick={() => setSection("budget")}
+              >
+                Budget & Alerts
               </Button>
               <Button
                 variant={section === "notifications" ? "secondary" : "ghost"}

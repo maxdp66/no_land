@@ -226,6 +226,10 @@ pub async fn write_diagnostic_report(
         !state.credentials.vast_api_key.trim().is_empty()
     ));
     body.push_str(&format!(
+        "- TensorDock credentials configured: `{}`\n",
+        !state.credentials.tensordock_api_key.trim().is_empty()
+    ));
+    body.push_str(&format!(
         "- Orchestration state: `{:?}`\n",
         state.orchestration_state
     ));
@@ -264,6 +268,62 @@ pub async fn write_diagnostic_report(
             body.push_str(&network);
             body.push_str("\n```\n\n");
         }
+    }
+
+    body.push_str("## Provisioning Checkpoints\n\n");
+    if state.provisioned_servers.is_empty() {
+        body.push_str("No provisioned servers.\n\n");
+    } else {
+        for server in &state.provisioned_servers {
+            let provider = crate::models::provider::resolve_instance(
+                &state.provider_instance_refs,
+                server.instance_id,
+            )
+            .map(|resolved| resolved.provider.display_name())
+            .unwrap_or("unknown provider");
+            let steps = serde_json::to_value(&server.steps).unwrap_or_default();
+            let mut completed = Vec::new();
+            let mut pending = Vec::new();
+            if let Some(map) = steps.as_object() {
+                for (step, done) in map {
+                    if done.as_bool() == Some(true) {
+                        completed.push(step.as_str());
+                    } else {
+                        pending.push(step.as_str());
+                    }
+                }
+            }
+            body.push_str(&format!(
+                "- Instance `{}` ({provider}, status `{}`, last state `{:?}`)\n  - Done: {}\n  - Pending: {}\n",
+                server.instance_id,
+                server.status,
+                server.last_state,
+                if completed.is_empty() { "none".to_string() } else { completed.join(", ") },
+                if pending.is_empty() { "none".to_string() } else { pending.join(", ") },
+            ));
+        }
+        body.push('\n');
+    }
+
+    body.push_str("## Recent Stream Quality\n\n");
+    if state.quality_history.is_empty() {
+        body.push_str("No recorded streaming sessions.\n\n");
+    } else {
+        for record in state.quality_history.iter().rev().take(10) {
+            body.push_str(&format!(
+                "- Instance `{}` {} → {}: score `{:.0}`, RTT `{}`, RTT variation `{}`, fps `{:.0}`, missing frames `{:.2}%`, {} samples\n",
+                record.instance_id,
+                record.started_at.to_rfc3339(),
+                record.ended_at.to_rfc3339(),
+                record.score,
+                record.avg_rtt_ms.map_or("n/a".to_string(), |rtt| format!("{rtt:.1} ms")),
+                record.avg_rtt_variance_ms.map_or("n/a".to_string(), |rtt| format!("{rtt:.1} ms")),
+                record.avg_fps,
+                record.avg_missing_frames_percent,
+                record.samples,
+            ));
+        }
+        body.push('\n');
     }
 
     body.push_str("## Recent Provisioning Events\n\n");

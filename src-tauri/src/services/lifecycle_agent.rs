@@ -129,21 +129,27 @@ impl LifecycleAgentProvisioner {
                         "The active shared-storage profile has no repository key".to_string(),
                     ));
                 }
-                if state.credentials.vast_api_key.trim().is_empty() {
-                    return Err(AppError::InvalidInput(
-                        "A Vast.ai API key is required for lifecycle automation".to_string(),
-                    ));
-                }
+                lifecycle_provider_target(context, &state, instance_id)?;
             }
         }
 
-        let config = LifecycleConfig::from_settings(
+        let target = {
+            let state = context.load_state().await;
+            lifecycle_provider_target(context, &state, instance_id)
+        };
+        // A disabled config does not need a credential, only the kind/URL.
+        let (provider_kind, base_url) = match &target {
+            Ok(target) => (target.kind, target.base_url.clone()),
+            Err(_) => ("vast", context.config.vast_base_url.clone()),
+        };
+        let mut config = LifecycleConfig::from_settings(
             settings.enabled,
             instance_id,
             settings.inactivity_hours,
             settings.backup_app_limit,
-            context.config.vast_base_url.clone(),
+            base_url,
         )?;
+        config.provider_kind = provider_kind;
 
         ensure_state_agent(remote, &context.config.audio_target_user).await?;
         ensure_installed_locked(remote, &context.config.audio_target_user).await?;
@@ -275,6 +281,61 @@ struct LifecycleConfig {
     capability_path: &'static str,
     vast_base_url: String,
     provider_action: &'static str,
+    /// Omitted for Vast so configs stay readable by agents that predate
+    /// multi-provider support (the agent rejects unknown fields).
+    #[serde(skip_serializing_if = "is_vast_kind")]
+    provider_kind: &'static str,
+}
+
+fn is_vast_kind(kind: &&'static str) -> bool {
+    *kind == "vast"
+}
+
+/// Provider credentials and ids the VM agent needs to stop/destroy itself.
+struct LifecycleProviderTarget {
+    kind: &'static str,
+    base_url: String,
+    api_key: String,
+    remote_instance_id: String,
+}
+
+fn lifecycle_provider_target(
+    context: &AppContext,
+    state: &crate::models::app_state::PersistedAppState,
+    instance_id: u64,
+) -> AppResult<LifecycleProviderTarget> {
+    use crate::models::provider::{resolve_instance, CloudProviderKind};
+    let resolved = resolve_instance(&state.provider_instance_refs, instance_id).ok_or_else(|| {
+        AppError::InvalidInput(format!(
+            "Instance {instance_id} is not linked to a known provider; refresh rented servers and retry"
+        ))
+    })?;
+    let (kind, base_url, api_key, remote_instance_id) = match resolved.provider {
+        CloudProviderKind::Vast => (
+            "vast",
+            context.config.vast_base_url.clone(),
+            state.credentials.vast_api_key.clone(),
+            String::new(),
+        ),
+        CloudProviderKind::Tensordock => (
+            "tensordock",
+            context.config.tensordock_base_url.clone(),
+            state.credentials.tensordock_api_key.clone(),
+            resolved.remote_id,
+        ),
+    };
+    if api_key.trim().is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "A {} API key is required for lifecycle automation",
+            resolved.provider.display_name()
+        )));
+    }
+    Ok(LifecycleProviderTarget {
+        kind,
+        base_url,
+        api_key,
+        remote_instance_id,
+    })
 }
 
 impl LifecycleConfig {
@@ -318,6 +379,7 @@ impl LifecycleConfig {
             capability_path: CAPABILITY_PATH,
             vast_base_url: base_url.to_string(),
             provider_action: "destroy",
+            provider_kind: "vast",
         })
     }
 }
@@ -347,6 +409,8 @@ struct VastCapability {
     api_key: String,
     instance_id: u64,
     action: &'static str,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    remote_instance_id: String,
 }
 
 impl Drop for VastCapability {
@@ -528,15 +592,9 @@ async fn prepare_capability(
 
     let master_key_hex = hex::encode(repository_key);
     repository_key.fill(0);
-    let api_key = {
+    let target = {
         let state = context.load_state().await;
-        let key = state.credentials.vast_api_key.clone();
-        if key.trim().is_empty() {
-            return Err(AppError::InvalidInput(
-                "A Vast.ai API key is required for lifecycle automation".into(),
-            ));
-        }
-        key
+        lifecycle_provider_target(context, &state, instance_id)?
     };
 
     let capability = StorageCapability {
@@ -547,10 +605,11 @@ async fn prepare_capability(
         session,
         master_key_hex,
         provider: VastCapability {
-            kind: "vast",
-            api_key,
+            kind: target.kind,
+            api_key: target.api_key.clone(),
             instance_id,
             action: "destroy",
+            remote_instance_id: target.remote_instance_id.clone(),
         },
     };
     let mut bytes = serde_json::to_vec_pretty(&capability).map_err(|_| {
@@ -1103,6 +1162,10 @@ mod tests {
         assert_eq!(value["capabilityPath"], CAPABILITY_PATH);
         assert_eq!(value["vastBaseUrl"], "https://console.vast.ai");
         assert_eq!(value["providerAction"], "destroy");
+        assert!(
+            value.get("providerKind").is_none(),
+            "Vast configs must stay readable by older agents"
+        );
     }
 
     #[test]
@@ -1128,6 +1191,7 @@ mod tests {
                 api_key: "secret".to_string(),
                 instance_id: 42,
                 action: "destroy",
+                remote_instance_id: String::new(),
             },
         };
         let value = serde_json::to_value(&capability).unwrap();
@@ -1140,6 +1204,7 @@ mod tests {
         assert_eq!(value["provider"]["apiKey"], "secret");
         assert_eq!(value["provider"]["instanceId"], 42);
         assert_eq!(value["provider"]["action"], "destroy");
+        assert!(value["provider"].get("remoteInstanceId").is_none());
         assert_eq!(value["session"]["operation_id"], "seed");
         assert_eq!(value["session"]["config_ini"], "[remote]\ntype = s3\n");
     }

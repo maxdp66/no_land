@@ -84,3 +84,7 @@ src-tauri/platform/*
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Ad-hoc debugging scripts belong in scripts/ or outside the repo
+/*.exp
+/*.py

@@ -6,7 +6,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::config::ProviderAction;
+use crate::config::{ProviderAction, ProviderKind};
 use crate::{AgentError, Result};
 
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -16,6 +16,36 @@ pub struct ProviderRequest {
     pub instance_id: u64,
     pub action: ProviderAction,
     pub api_key: String,
+    pub kind: ProviderKind,
+    /// Provider-side id when it differs from `instance_id` (TensorDock).
+    pub remote_instance_id: String,
+}
+
+/// HTTP method, URL and optional JSON body for a lifecycle action.
+pub fn provider_call(request: &ProviderRequest) -> (&'static str, String, Option<&'static str>) {
+    let base = request.base_url.trim_end_matches('/');
+    match (request.kind, request.action) {
+        (ProviderKind::Vast, ProviderAction::Destroy) => (
+            "DELETE",
+            format!("{base}/api/v0/instances/{}/", request.instance_id),
+            None,
+        ),
+        (ProviderKind::Vast, ProviderAction::Stop) => (
+            "PUT",
+            format!("{base}/api/v0/instances/{}/", request.instance_id),
+            Some("{\\\"state\\\":\\\"stopped\\\"}"),
+        ),
+        (ProviderKind::Tensordock, ProviderAction::Destroy) => (
+            "DELETE",
+            format!("{base}/api/v2/instances/{}", request.remote_instance_id),
+            None,
+        ),
+        (ProviderKind::Tensordock, ProviderAction::Stop) => (
+            "POST",
+            format!("{base}/api/v2/instances/{}/stop", request.remote_instance_id),
+            None,
+        ),
+    }
 }
 
 impl Drop for ProviderRequest {
@@ -40,15 +70,7 @@ impl VastLifecycleProvider {
 #[async_trait]
 impl ProviderLifecycle for VastLifecycleProvider {
     async fn apply(&self, request: ProviderRequest) -> Result<()> {
-        let endpoint = format!(
-            "{}/api/v0/instances/{}/",
-            request.base_url.trim_end_matches('/'),
-            request.instance_id
-        );
-        let method = match request.action {
-            ProviderAction::Destroy => "DELETE",
-            ProviderAction::Stop => "PUT",
-        };
+        let (method, endpoint, body) = provider_call(&request);
 
         // Feed the bearer credential through curl's stdin config so it never
         // appears in process arguments or diagnostic output.
@@ -58,8 +80,9 @@ impl ProviderLifecycle for VastLifecycleProvider {
             method,
             escape_curl_config(&request.api_key),
         );
-        if request.action == ProviderAction::Stop {
-            config.push_str("header = \"Content-Type: application/json\"\ndata = \"{\\\"state\\\":\\\"stopped\\\"}\"\n");
+        if let Some(body) = body {
+            config.push_str("header = \"Content-Type: application/json\"\n");
+            config.push_str(&format!("data = \"{body}\"\n"));
         }
 
         let mut child = Command::new("curl")
@@ -105,7 +128,44 @@ fn escape_curl_config(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::escape_curl_config;
+    use super::*;
+
+    fn request(kind: ProviderKind, action: ProviderAction) -> ProviderRequest {
+        ProviderRequest {
+            base_url: "https://example.test/".into(),
+            instance_id: 42,
+            action,
+            api_key: "secret".into(),
+            kind,
+            remote_instance_id: "6b7e-uuid".into(),
+        }
+    }
+
+    #[test]
+    fn provider_calls_target_each_providers_api() {
+        let (method, url, body) = provider_call(&request(ProviderKind::Vast, ProviderAction::Stop));
+        assert_eq!((method, url.as_str()), ("PUT", "https://example.test/api/v0/instances/42/"));
+        assert!(body.is_some());
+
+        let (method, url, body) =
+            provider_call(&request(ProviderKind::Vast, ProviderAction::Destroy));
+        assert_eq!((method, url.as_str()), ("DELETE", "https://example.test/api/v0/instances/42/"));
+        assert!(body.is_none());
+
+        let (method, url, _) =
+            provider_call(&request(ProviderKind::Tensordock, ProviderAction::Stop));
+        assert_eq!(
+            (method, url.as_str()),
+            ("POST", "https://example.test/api/v2/instances/6b7e-uuid/stop")
+        );
+
+        let (method, url, _) =
+            provider_call(&request(ProviderKind::Tensordock, ProviderAction::Destroy));
+        assert_eq!(
+            (method, url.as_str()),
+            ("DELETE", "https://example.test/api/v2/instances/6b7e-uuid")
+        );
+    }
 
     #[test]
     fn curl_config_values_are_escaped() {

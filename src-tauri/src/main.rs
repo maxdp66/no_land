@@ -466,6 +466,19 @@ fn main() {
             let performance_overlay = moonlight_manager.performance_overlay.clone();
             app.manage(moonlight_manager);
             moonlight::platform::performance_overlay::start(app.handle().clone(), performance_overlay);
+            services::quality_recorder::start(app.handle().clone(), context.clone());
+
+            let price_app = app.handle().clone();
+            let price_context = context.clone();
+            tauri::async_runtime::spawn(async move {
+                services::price_watch::run_price_watch(price_app, price_context).await;
+            });
+
+            let spend_app = app.handle().clone();
+            let spend_context = context.clone();
+            tauri::async_runtime::spawn(async move {
+                services::spend_tracker::run_spend_tracking(spend_app, spend_context).await;
+            });
 
             let app_handle = app.handle().clone();
             let resume_context = context.clone();
@@ -574,6 +587,14 @@ fn main() {
             get_auto_shutdown_settings,
             get_instance_auto_shutdown_status,
             save_auto_shutdown_settings,
+            get_spend_summary,
+            save_server_preset,
+            delete_server_preset,
+            apply_server_preset,
+            save_price_alert,
+            delete_price_alert,
+            set_price_alert_enabled,
+            update_budget_settings,
             complete_onboarding,
             refresh_state_agent_index,
             refresh_ip_location,
@@ -609,6 +630,7 @@ fn main() {
             get_rented_instances,
             get_vast_wallet_summary,
             update_vast_api_key,
+            update_tensordock_api_key,
             update_platform_credentials,
             get_cloudflare_turn_settings,
             save_cloudflare_turn_settings,

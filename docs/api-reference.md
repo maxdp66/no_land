@@ -16,6 +16,31 @@ The UI uses wrappers in `src/lib/backend.ts`, which map to Tauri commands in `sr
 - `select_offer`
 - `get_rented_instances`
 
+## Provider credentials
+
+- `update_vast_api_key`
+- `update_tensordock_api_key` (verifies the key; empty string removes it)
+
+## Saved setups (presets)
+
+- `save_server_preset` (name; replaces a preset with the same name, max 20)
+- `delete_server_preset`
+- `apply_server_preset` (copies server preferences and stream bitrate/fps/resolution, clears the selected offer)
+
+## Price alerts
+
+- `save_price_alert` (gpuQuery substring, countryCode or empty, maxHourlyUsd; max 10; runs a check immediately)
+- `delete_price_alert`
+- `set_price_alert_enabled`
+- event: `price:alert` (`PriceAlertMatch`), raised by `services/price_watch.rs` every 15 minutes at most once per watch per 6 hours unless the price drops further
+- `instance:preempted` (`InstancePreemptedEvent`): interruptible instance stopped by the provider while intended to run
+
+## Spend and budget
+
+- `get_spend_summary`
+- `update_budget_settings`
+- events: `spend:updated` (`SpendSummary`), `spend:alert` (`SpendAlert`)
+
 ## Provisioning start and pairing
 
 - `start_play_flow`

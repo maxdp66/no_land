@@ -17,7 +17,7 @@ use crate::services::shared_storage::provider_profiles::{
     shared_profile_manager, SharedStorageProfileManager,
 };
 use crate::services::shared_storage::shared_storage_manager::SharedStorageManager;
-use crate::services::vast_api::VastApiClient;
+use crate::services::cloud_provider::CloudClient;
 
 fn get_profile_manager() -> std::sync::Arc<SharedStorageProfileManager> {
     shared_profile_manager()
@@ -391,19 +391,9 @@ async fn build_remote_exec_from_state(context: &AppContext) -> Result<RemoteExec
     };
     let ssh_password = state.ssh.ssh_password.clone();
 
-    let api_key = state.credentials.vast_api_key.clone();
-    if api_key.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Vast API key is missing. Add it in Settings first.".to_string(),
-        ));
-    }
     drop(state);
 
-    let vast = VastApiClient::new(
-        context.http_client.clone(),
-        context.config.vast_base_url.clone(),
-        api_key,
-    );
+    let vast = CloudClient::from_context(context).await?;
     let instance = vast.get_instance(instance_id).await?;
     let ssh_host = if instance.public_ip.trim().is_empty() {
         instance.ssh_host.clone()

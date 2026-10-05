@@ -2,10 +2,10 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use noland_rclone_adapter::EphemeralRcloneSession;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::config::{Config, ProviderAction};
+use crate::config::{Config, ProviderAction, ProviderKind};
 use crate::{AgentError, Result};
 
 pub const CAPABILITY_VERSION: u32 = 1;
@@ -25,16 +25,25 @@ pub struct StorageCapability {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VastCapability {
-    pub kind: VastProviderKind,
+    pub kind: ProviderKind,
     pub api_key: String,
     pub instance_id: u64,
     pub action: ProviderAction,
+    /// Provider-side id for providers whose ids are not the local `u64`
+    /// (TensorDock UUIDs).
+    #[serde(default)]
+    pub remote_instance_id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum VastProviderKind {
-    Vast,
+/// Kept for callers that predate multi-provider support.
+pub type VastProviderKind = ProviderKind;
+
+pub fn is_safe_remote_instance_id(raw: &str) -> bool {
+    !raw.is_empty()
+        && raw.len() <= 128
+        && raw
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
 impl Drop for StorageCapability {
@@ -70,6 +79,18 @@ impl StorageCapability {
         {
             return Err(AgentError::new(
                 "capability instance does not match configuration",
+            ));
+        }
+        if self.provider.kind != config.provider_kind {
+            return Err(AgentError::new(
+                "capability provider does not match configuration",
+            ));
+        }
+        if self.provider.kind == ProviderKind::Tensordock
+            && !is_safe_remote_instance_id(&self.provider.remote_instance_id)
+        {
+            return Err(AgentError::new(
+                "capability remoteInstanceId is missing or invalid",
             ));
         }
         if self.provider.action != config.provider_action {
@@ -145,6 +166,7 @@ mod tests {
                 api_key: "secret".into(),
                 instance_id: 42,
                 action: ProviderAction::Destroy,
+                remote_instance_id: String::new(),
             },
         }
     }
@@ -167,6 +189,27 @@ mod tests {
         assert!(value.validate(&config, now).is_err());
         let mut value = capability();
         value.master_key_hex = "not-a-key".into();
+        assert!(value.validate(&config, now).is_err());
+    }
+
+    #[test]
+    fn tensordock_capability_requires_matching_kind_and_remote_id() {
+        let now = Utc.timestamp_opt(1_000, 0).unwrap();
+        let config = Config {
+            enabled: true,
+            instance_id: 42,
+            provider_kind: crate::config::ProviderKind::Tensordock,
+            ..Config::default()
+        };
+        // Kind mismatch with the configuration.
+        assert!(capability().validate(&config, now).is_err());
+
+        let mut value = capability();
+        value.provider.kind = crate::config::ProviderKind::Tensordock;
+        assert!(value.validate(&config, now).is_err(), "remote id required");
+        value.provider.remote_instance_id = "6b7e8f0a-1c2d".into();
+        assert!(value.validate(&config, now).is_ok());
+        value.provider.remote_instance_id = "../etc".into();
         assert!(value.validate(&config, now).is_err());
     }
 }

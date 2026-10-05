@@ -27,6 +27,16 @@ const SETTINGS: Array<{ kind: NotificationKind; title: string; description: stri
     title: "Provisioning updates",
     description: "Notify me when provisioning needs your attention or finishes.",
   },
+  {
+    kind: "budget",
+    title: "Budget alerts",
+    description: "Warn me as monthly spend approaches my budget and when instances are stopped because of it.",
+  },
+  {
+    kind: "priceAlerts",
+    title: "Price alerts",
+    description: "Tell me when a GPU I am watching is available at or below my target price.",
+  },
 ];
 
 export function NotificationSettings() {

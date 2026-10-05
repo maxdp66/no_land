@@ -15,10 +15,17 @@ import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { StreamWindowScreen } from "../features/moonlight/StreamWindowScreen";
 import { useAppStore } from "../store/appStore";
 import appLogo from "../public/noland.png";
-import { moonlightGetSessionState, refreshStateAgentIndex } from "../lib/backend";
+import {
+  moonlightGetSessionState,
+  refreshStateAgentIndex,
+  subscribeInstancePreempted,
+  subscribePriceAlerts,
+  subscribeSpendAlerts,
+} from "../lib/backend";
 import { buildDiagnosticIssueUrl } from "../lib/githubIssue";
 import { isRunningInTauri } from "../lib/tauri";
-import { notifyInstancesNeedAttention } from "../lib/instanceNotifications";
+import { notifyInstancePreempted, notifyInstancesNeedAttention } from "../lib/instanceNotifications";
+import { notifyPriceAlert, notifySpendAlert } from "../lib/spendNotifications";
 
 import {
   checkForAppUpdate,
@@ -617,6 +624,37 @@ export function App() {
       void unlistenPromise.then((unlisten) => unlisten());
     };
   }, [loading, rentedInstances.length, windowLabel, windowLabelResolved]);
+
+  useEffect(() => {
+    if (!windowLabelResolved || windowLabel !== "main" || !isRunningInTauri()) {
+      return;
+    }
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+    const keep = (stop: () => void) => {
+      if (disposed) {
+        stop();
+      } else {
+        unlisteners.push(stop);
+      }
+    };
+    void subscribeSpendAlerts((alert) => {
+      void notifySpendAlert(alert);
+      if (alert.kind === "auto_stopped") {
+        void useAppStore.getState().loadRentedInstances();
+      }
+    }).then(keep);
+    void subscribePriceAlerts((match) => void notifyPriceAlert(match)).then(keep);
+    void subscribeInstancePreempted((event) => {
+      useAppStore.getState().reportPreemptedInstance(event);
+      void notifyInstancePreempted(event);
+      void useAppStore.getState().loadRentedInstances();
+    }).then(keep);
+    return () => {
+      disposed = true;
+      unlisteners.forEach((stop) => stop());
+    };
+  }, [windowLabel, windowLabelResolved]);
 
   const rentedInstanceCount = rentedInstances.length;
   const hasEmbeddedActiveStream =

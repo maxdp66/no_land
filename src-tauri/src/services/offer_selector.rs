@@ -1,6 +1,9 @@
 use crate::{
     models::{
         app_state::{LocationState, OfferCandidate},
+        quality::{
+            estimated_rtt_from_distance, observed_quality, SessionQualityRecord, POOR_SCORE,
+        },
         vast::VastOffer,
     },
     services::{app_config::OfferScoring, location::LocationService},
@@ -16,6 +19,18 @@ impl OfferSelector {
         &self,
         offers: Vec<VastOffer>,
         location: &LocationState,
+    ) -> Vec<OfferCandidate> {
+        self.rank_offers_with_history(offers, location, &[])
+    }
+
+    /// Rank offers, annotating each with the user's own streaming history
+    /// for that host/region. Hosts or regions with a poor track record sort
+    /// after others in the same location tier.
+    pub fn rank_offers_with_history(
+        &self,
+        offers: Vec<VastOffer>,
+        location: &LocationState,
+        history: &[SessionQualityRecord],
     ) -> Vec<OfferCandidate> {
         // Keep all offers returned by the API/category merge.
         // Ranking should sort, not silently remove market options.
@@ -69,6 +84,18 @@ impl OfferSelector {
                     offer_type: offer.offer_type,
                     has_static_ip: offer.has_static_ip,
                     has_avx: offer.has_avx,
+                    observed_quality: observed_quality(
+                        history,
+                        &offer.provider,
+                        offer.host_id,
+                        &offer.country,
+                        &offer.region,
+                    ),
+                    estimated_rtt_ms: (distance < 99999.0)
+                        .then(|| estimated_rtt_from_distance(distance))
+                        .flatten(),
+                    provider: offer.provider,
+                    provider_offer_ref: offer.provider_offer_ref,
                 }
             })
             .collect::<Vec<_>>();
@@ -76,6 +103,7 @@ impl OfferSelector {
         candidates.sort_by(|left, right| {
             location_match_rank(left, location)
                 .cmp(&location_match_rank(right, location))
+                .then_with(|| poor_history_rank(left).cmp(&poor_history_rank(right)))
                 .then_with(|| {
                     gpu_preference_rank(&left.gpu_name).cmp(&gpu_preference_rank(&right.gpu_name))
                 })
@@ -110,6 +138,15 @@ impl OfferSelector {
             + normalized_price * self.scoring.price_weight
             + normalized_vram * self.scoring.vram_weight
     }
+}
+
+fn poor_history_rank(candidate: &OfferCandidate) -> u8 {
+    u8::from(
+        candidate
+            .observed_quality
+            .as_ref()
+            .is_some_and(|quality| quality.score < POOR_SCORE),
+    )
 }
 
 fn location_match_rank(candidate: &OfferCandidate, location: &LocationState) -> u8 {
@@ -269,5 +306,76 @@ fn format_location_label(offer: &VastOffer) -> String {
         "Unknown region".to_string()
     } else {
         parts.join(", ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::quality::{QualityAccumulator, QualitySample, SessionPlacement, MIN_SAMPLES};
+
+    fn offer(id: u64, host_id: u64, price: f64) -> VastOffer {
+        let mut offer = VastOffer::from_value(&serde_json::json!({
+            "id": id,
+            "host_id": host_id,
+            "gpu_name": "RTX 4090",
+            "geolocation": "Los Angeles, California, US",
+            "dph_total": price,
+        }))
+        .unwrap();
+        offer.latitude = 34.0;
+        offer.longitude = -118.0;
+        offer
+    }
+
+    fn session(host_id: u64, rtt: f64) -> SessionQualityRecord {
+        let mut accumulator = QualityAccumulator::new(
+            1,
+            SessionPlacement {
+                provider: "vast".into(),
+                host_id: Some(host_id),
+                country: "US".into(),
+                region: "California".into(),
+                ..SessionPlacement::default()
+            },
+            chrono::Utc::now(),
+        );
+        for _ in 0..MIN_SAMPLES {
+            accumulator.add(QualitySample {
+                rtt_ms: Some(rtt),
+                fps: 60.0,
+                ..QualitySample::default()
+            });
+        }
+        accumulator.finish(chrono::Utc::now()).unwrap()
+    }
+
+    #[test]
+    fn poor_history_sorts_after_otherwise_better_offers() {
+        let selector = OfferSelector {
+            scoring: crate::services::app_config::AppConfig::default().scoring,
+        };
+        let location = LocationState {
+            latitude: 34.0,
+            longitude: -118.0,
+            ..LocationState::default()
+        };
+        let history = vec![session(1, 120.0), session(2, 12.0)];
+        let ranked = selector.rank_offers_with_history(
+            vec![offer(10, 1, 0.30), offer(20, 2, 0.50)],
+            &location,
+            &history,
+        );
+        assert_eq!(ranked[0].id, 20, "cheaper host with bad history is pushed down");
+        assert_eq!(ranked[0].observed_quality.as_ref().unwrap().basis, "host");
+        assert!(ranked[1].observed_quality.as_ref().unwrap().score < POOR_SCORE);
+        assert_eq!(ranked[0].estimated_rtt_ms, Some(8.0));
+
+        let without_history = selector.rank_offers(
+            vec![offer(10, 1, 0.30), offer(20, 2, 0.50)],
+            &location,
+        );
+        assert_eq!(without_history[0].id, 10);
+        assert!(without_history[0].observed_quality.is_none());
     }
 }
