@@ -103,7 +103,7 @@ use crate::{
         post_wireguard_setup::{
             authorize_sunshine_pin, get_setup_status, retry_setup_stage, setup_moonlight_sunshine,
             setup_wireguard_app_handoff, verify_sunshine_api, verify_wireguard_connection,
-            ReachabilityResult, SunshineVerificationResult,
+            ReachabilityResult, SunshinePinWait, SunshineVerificationResult,
         },
         reboot_helper::RebootHelperService,
         remote_display::{ApplyDisplayModeResult, InstanceDisplayStatus, RemoteDisplayService},
@@ -1369,6 +1369,7 @@ async fn auto_pair_embedded_host(
                 &first_pin,
                 &pairing_id,
                 Some("Noland Connect"),
+                SunshinePinWait::Submitted,
             )
             .await
             .map_err(|error| {
@@ -1406,6 +1407,7 @@ async fn auto_pair_embedded_host(
                         &second_pin,
                         &pairing_id,
                         Some("Noland Connect"),
+                        SunshinePinWait::Submitted,
                     )
                     .await
                     .map_err(|error| {
@@ -3194,6 +3196,7 @@ pub async fn moonlight_complete_instance_pairing(
                 &pairing_pin,
                 &pairing_id,
                 Some("Noland Connect"),
+                SunshinePinWait::Submitted,
             )
             .await
             .map_err(|error| {

@@ -42,12 +42,19 @@ const SUNSHINE_PRE_PIN_VERIFY_TIMEOUT: Duration = Duration::from_secs(300);
 const SUNSHINE_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const SUNSHINE_PIN_SUBMISSION_ATTEMPTS: usize = 3;
 const SUNSHINE_PIN_RETRY_DELAY: Duration = Duration::from_millis(350);
+/// Sunshine 2026.914+ holds `POST /api/pin` open until Moonlight finishes the
+/// pairing handshake, bounded by its `ping_timeout` (30s as configured).
+const SUNSHINE_PIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(60);
 const SUNSHINE_VERIFY_HTTP_ATTEMPTS: usize = 5;
 const SUNSHINE_VERIFY_HTTP_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 fn sunshine_http_client() -> AppResult<reqwest::Client> {
+    sunshine_http_client_with_timeout(SUNSHINE_HTTP_TIMEOUT)
+}
+
+fn sunshine_http_client_with_timeout(request_timeout: Duration) -> AppResult<reqwest::Client> {
     reqwest::Client::builder()
-        .timeout(SUNSHINE_HTTP_TIMEOUT)
+        .timeout(request_timeout)
         .danger_accept_invalid_certs(true)
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
@@ -90,6 +97,40 @@ fn parse_sunshine_pin_response_body(body: Option<&str>) -> (Option<bool>, Option
         parsed.as_ref().and_then(|json| json.status),
         parsed.and_then(|json| json.error),
     )
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SunshinePendingPairings {
+    #[serde(default)]
+    pairings: Vec<SunshinePendingPairing>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SunshinePendingPairing {
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    address: String,
+}
+
+/// How long to wait on Sunshine after a PIN is matched to a waiting client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SunshinePinWait {
+    /// Wait until Sunshine reports whether pairing completed. Use when another
+    /// process (external Moonlight) drives the pairing handshake.
+    UntilPaired,
+    /// Return once the PIN is on its way. Use when the caller drives the
+    /// handshake itself: newer Sunshine only answers `POST /api/pin` after the
+    /// remaining handshake stages, so waiting would deadlock.
+    Submitted,
+}
+
+enum PendingPairingLookup {
+    /// Sunshine predates `GET /api/pin`; it matches the PIN without a pairing ID.
+    Legacy,
+    Found(SunshinePendingPairing),
+    NoneWaiting,
 }
 
 impl SunshineApiResponse {
@@ -1082,10 +1123,10 @@ fn sunshine_pairing_id(unique_id: &str) -> String {
         return normalized;
     }
 
-    // Older persisted Moonlight identities use a 16-character unique ID. Sunshine's
-    // current /api/pin endpoint requires a 32-character hexadecimal pairing ID;
-    // expanding the stable legacy ID keeps re-pairing requests associated with the
-    // same client without changing the GameStream identity format.
+    // Older persisted Moonlight identities use a 16-character unique ID. Sunshine
+    // releases before 2026.914 validate /api/pin's pairing ID as 32 hexadecimal
+    // characters without matching it to a client; expanding the stable legacy ID
+    // satisfies that check without changing the GameStream identity format.
     format!("{normalized}{normalized}")
 }
 
@@ -1103,7 +1144,7 @@ async fn submit_sunshine_pin_request(
         .basic_auth(username, Some(password))
         .json(&serde_json::json!({
             "pin": pin,
-            "pairing_id": sunshine_pairing_id(pairing_id),
+            "pairing_id": pairing_id,
             "name": client_name,
         }))
         .send()
@@ -1127,6 +1168,115 @@ async fn submit_sunshine_pin_request(
     })
 }
 
+fn welcome_flow_error() -> AppError {
+    AppError::Provisioning(
+        "Sunshine is still in its first-run welcome flow after repair. Finish Sunshine setup on the host before submitting a Moonlight PIN.".to_string(),
+    )
+}
+
+fn pin_request_rejected_error(response: &SunshineApiResponse) -> AppError {
+    AppError::Provisioning(format!(
+        "Sunshine rejected the PIN request with status {}{}{}",
+        response.status,
+        response
+            .location
+            .as_deref()
+            .map(|location| format!(" (location: {location})"))
+            .unwrap_or_default(),
+        response
+            .body
+            .as_deref()
+            .map(|body| format!(" (body: {body})"))
+            .unwrap_or_default()
+    ))
+}
+
+/// Sunshine 2026.914+ gives every client waiting in the pairing handshake a
+/// random pairing ID, listed by `GET /api/pin`; `POST /api/pin` must quote it.
+async fn lookup_pending_sunshine_pairing(
+    client: &reqwest::Client,
+    host: &str,
+    username: &str,
+    password: &str,
+) -> AppResult<PendingPairingLookup> {
+    let response = client
+        .get(sunshine_api_url(host, "/api/pin"))
+        .basic_auth(username, Some(password))
+        .send()
+        .await
+        .map_err(|error| {
+            AppError::Api(format!("Failed listing pending Sunshine pairings: {error}"))
+        })?;
+
+    let status = response.status();
+    let location = response
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::METHOD_NOT_ALLOWED
+    {
+        return Ok(PendingPairingLookup::Legacy);
+    }
+
+    let body = response.text().await.ok();
+    let listing = SunshineApiResponse {
+        status,
+        location,
+        json_status: None,
+        json_error: None,
+        body,
+    };
+    if listing.welcome_redirect() {
+        return Err(welcome_flow_error());
+    }
+    if !status.is_success() {
+        return Err(pin_request_rejected_error(&listing));
+    }
+
+    Ok(pending_pairing_from_listing(listing.body.as_deref()))
+}
+
+fn pending_pairing_from_listing(body: Option<&str>) -> PendingPairingLookup {
+    let Some(parsed) =
+        body.and_then(|text| serde_json::from_str::<SunshinePendingPairings>(text).ok())
+    else {
+        // A success body without a pairing list comes from a Sunshine that
+        // predates the listing; fall back to the PIN-only request it accepts.
+        return PendingPairingLookup::Legacy;
+    };
+
+    // Sunshine lists pairings oldest first and keeps one per client, so the
+    // newest entry is the handshake that was just started over the tunnel.
+    parsed
+        .pairings
+        .into_iter()
+        .last()
+        .map(PendingPairingLookup::Found)
+        .unwrap_or(PendingPairingLookup::NoneWaiting)
+}
+
+fn pin_completion_error(response: &SunshineApiResponse) -> Option<AppError> {
+    if response.welcome_redirect() {
+        return Some(welcome_flow_error());
+    }
+    if !response.status.is_success() {
+        return Some(pin_request_rejected_error(response));
+    }
+    if response.json_status == Some(false) {
+        return Some(AppError::Provisioning(
+            response
+                .json_error
+                .clone()
+                .unwrap_or_else(|| {
+                    "Sunshine did not complete pairing: the PIN was wrong, the client cancelled, or the handshake timed out.".to_string()
+                }),
+        ));
+    }
+    None
+}
+
 pub async fn authorize_sunshine_pin(
     host: &str,
     username: &str,
@@ -1134,6 +1284,7 @@ pub async fn authorize_sunshine_pin(
     pin: &str,
     pairing_id: &str,
     client_name: Option<&str>,
+    wait: SunshinePinWait,
 ) -> AppResult<()> {
     let client = sunshine_http_client()?;
     let effective_client_name = client_name
@@ -1144,42 +1295,117 @@ pub async fn authorize_sunshine_pin(
         .or_else(|| env::var("HOSTNAME").ok())
         .unwrap_or_else(|| "machine".to_string());
 
+    for attempt in 1..=SUNSHINE_PIN_SUBMISSION_ATTEMPTS {
+        let pending = match lookup_pending_sunshine_pairing(&client, host, username, password)
+            .await?
+        {
+            PendingPairingLookup::Legacy => {
+                return authorize_legacy_sunshine_pin(
+                    &client,
+                    host,
+                    username,
+                    password,
+                    pin,
+                    pairing_id,
+                    &effective_client_name,
+                )
+                .await;
+            }
+            PendingPairingLookup::Found(pending) => pending,
+            PendingPairingLookup::NoneWaiting => {
+                if attempt < SUNSHINE_PIN_SUBMISSION_ATTEMPTS {
+                    warn!(
+                        host,
+                        attempt,
+                        total_attempts = SUNSHINE_PIN_SUBMISSION_ATTEMPTS,
+                        "Sunshine /api/pin reported no pending Moonlight pairing session yet; retrying shortly"
+                    );
+                    sleep(SUNSHINE_PIN_RETRY_DELAY).await;
+                }
+                continue;
+            }
+        };
+
+        info!(
+            host,
+            pairing_id = %pending.id,
+            device_name = %pending.name,
+            client_address = %pending.address,
+            "Submitting PIN for pending Sunshine pairing"
+        );
+
+        let host = host.to_string();
+        let username = username.to_string();
+        let password = password.to_string();
+        let pin = pin.to_string();
+        let completion_client = sunshine_http_client_with_timeout(SUNSHINE_PIN_COMPLETION_TIMEOUT)?;
+        let submit = async move {
+            submit_sunshine_pin_request(
+                &completion_client,
+                &host,
+                &username,
+                &password,
+                &pin,
+                &pending.id,
+                &effective_client_name,
+            )
+            .await
+            .map_err(|error| AppError::Api(format!("Failed submitting Sunshine PIN: {error}")))
+            .and_then(|response| pin_completion_error(&response).map_or(Ok(()), Err))
+        };
+
+        return match wait {
+            SunshinePinWait::UntilPaired => submit.await,
+            SunshinePinWait::Submitted => {
+                // The caller's handshake reports the outcome; this only records why
+                // Sunshine refused, which the handshake sees as a stalled stage.
+                tokio::spawn(async move {
+                    if let Err(error) = submit.await {
+                        warn!(%error, "Sunshine did not complete PIN pairing");
+                    }
+                });
+                Ok(())
+            }
+        };
+    }
+
+    Err(AppError::Provisioning(
+        "Sunshine reported no pending Moonlight pairing session for the submitted PIN.".to_string(),
+    ))
+}
+
+/// Sunshine before 2026.914 accepts a PIN for whichever client is waiting and
+/// answers immediately, without a pairing ID lookup.
+async fn authorize_legacy_sunshine_pin(
+    client: &reqwest::Client,
+    host: &str,
+    username: &str,
+    password: &str,
+    pin: &str,
+    pairing_id: &str,
+    client_name: &str,
+) -> AppResult<()> {
     let mut last_pending_session_error = None;
 
     for attempt in 1..=SUNSHINE_PIN_SUBMISSION_ATTEMPTS {
         let response = submit_sunshine_pin_request(
-            &client,
+            client,
             host,
             username,
             password,
             pin,
-            pairing_id,
-            &effective_client_name,
+            &sunshine_pairing_id(pairing_id),
+            client_name,
         )
         .await
         .map_err(|error| AppError::Api(format!("Failed submitting Sunshine PIN: {error}")))?;
 
         if response.welcome_redirect() {
-            return Err(AppError::Provisioning(
-                "Sunshine is still in its first-run welcome flow after repair. Finish Sunshine setup on the host before submitting a Moonlight PIN.".to_string(),
-            ));
+            return Err(welcome_flow_error());
         }
 
         if !response.status.is_success() {
-            return Err(AppError::Provisioning(format!(
-                "Sunshine rejected the PIN request with status {}{}{}",
-                response.status,
-                response
-                    .location
-                    .as_deref()
-                    .map(|location| format!(" (location: {location})"))
-                    .unwrap_or_default(),
-                response
-                    .body
-                    .as_deref()
-                    .map(|body| format!(" (body: {body})"))
-                    .unwrap_or_default()
-            )));
+            return Err(pin_request_rejected_error(&response));
         }
 
         if response.json_status == Some(false) {
@@ -1652,7 +1878,10 @@ async fn emit_post_wireguard_event(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_sunshine_pin_response_body, sunshine_pairing_id, tcp_reachability};
+    use super::{
+        parse_sunshine_pin_response_body, pending_pairing_from_listing, sunshine_pairing_id,
+        tcp_reachability, PendingPairingLookup,
+    };
     use std::{net::TcpListener, time::Duration};
 
     #[test]
@@ -1702,5 +1931,37 @@ mod tests {
         ));
         assert_eq!(status, Some(false));
         assert_eq!(error.as_deref(), Some("pending session not found"));
+    }
+
+    #[test]
+    fn picks_newest_pending_sunshine_pairing() {
+        let lookup = pending_pairing_from_listing(Some(
+            r#"{"pairings":[
+                {"id":"00000000000000000000000000000001","name":"roth","address":"10.77.0.2"},
+                {"id":"00000000000000000000000000000002","name":"roth","address":"10.77.0.2"}
+            ]}"#,
+        ));
+        let PendingPairingLookup::Found(pending) = lookup else {
+            panic!("expected a pending pairing");
+        };
+        assert_eq!(pending.id, "00000000000000000000000000000002");
+    }
+
+    #[test]
+    fn reports_no_waiting_sunshine_pairing() {
+        let lookup = pending_pairing_from_listing(Some(r#"{"pairings":[]}"#));
+        assert!(matches!(lookup, PendingPairingLookup::NoneWaiting));
+    }
+
+    #[test]
+    fn treats_unlisted_pairings_as_legacy_sunshine() {
+        assert!(matches!(
+            pending_pairing_from_listing(Some("<html>Not Found</html>")),
+            PendingPairingLookup::Legacy
+        ));
+        assert!(matches!(
+            pending_pairing_from_listing(None),
+            PendingPairingLookup::Legacy
+        ));
     }
 }

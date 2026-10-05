@@ -23,7 +23,9 @@ use crate::{
     models::app_state::PersistedAppState,
     services::{
         app_context::AppContext,
-        post_wireguard_setup::{authorize_sunshine_pin, SUNSHINE_API_PORT, TUNNEL_HOST},
+        post_wireguard_setup::{
+            authorize_sunshine_pin, SunshinePinWait, SUNSHINE_API_PORT, TUNNEL_HOST,
+        },
     },
 };
 
@@ -276,6 +278,7 @@ async fn approve_pin_until_client_waits(
             pin,
             &pairing_id,
             Some(EXTERNAL_CLIENT_NAME),
+            SunshinePinWait::UntilPaired,
         )
         .await
         {
