@@ -94,6 +94,25 @@ fn prepare_known_hosts_file(host: &str, port: u16) -> Option<PathBuf> {
     Some(path)
 }
 
+/// Sidecar next to a pinned known_hosts file recording which instance the pin
+/// belongs to.
+fn pin_owner_path(pin: &Path) -> PathBuf {
+    let mut name = pin.file_name().unwrap_or_default().to_os_string();
+    name.push(".instance");
+    pin.with_file_name(name)
+}
+
+fn remove_pin_file(path: &Path, what: &str) -> bool {
+    match fs::remove_file(path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            warn!("Could not remove {what} {}: {error}", path.display());
+            false
+        }
+    }
+}
+
 /// Forget the pinned SSH host key for `host:port`. Must be called when a Vast
 /// instance is created or destroyed, because Vast can hand the same host:port
 /// to a different machine later.
@@ -101,13 +120,60 @@ pub fn forget_host_key(host: &str, port: u16) {
     let Some(path) = known_hosts_path(host, port) else {
         return;
     };
-    match fs::remove_file(&path) {
-        Ok(()) => info!("Forgot pinned SSH host key for {}:{}", host.trim(), port),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => warn!(
-            "Could not remove pinned SSH host key {}: {error}",
-            path.display()
-        ),
+    remove_pin_file(&pin_owner_path(&path), "SSH host key owner");
+    if remove_pin_file(&path, "pinned SSH host key") {
+        info!("Forgot pinned SSH host key for {}:{}", host.trim(), port);
+    }
+}
+
+/// Bind the pin at `pin` to `instance_id`. A pin recorded for another instance
+/// (or with no owner, from older versions) belongs to a machine that previously
+/// held this endpoint, so it is dropped. Returns true when a pin was dropped.
+fn bind_pin_to_instance(pin: &Path, instance_id: u64) -> bool {
+    let owner_path = pin_owner_path(pin);
+    let owner = fs::read_to_string(&owner_path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok());
+    if owner == Some(instance_id) {
+        return false;
+    }
+    let dropped = remove_pin_file(pin, "stale pinned SSH host key");
+    if let Some(parent) = owner_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(error) = fs::write(&owner_path, instance_id.to_string()) {
+        warn!(
+            "Could not record SSH host key owner {}: {error}",
+            owner_path.display()
+        );
+    }
+    dropped
+}
+
+/// Record that the provider reports `instance_id` at `host:port` for each of
+/// `hosts`. Pinned keys left by a different instance at the same endpoint are
+/// forgotten, so a replaced instance does not trip the host key check while a
+/// changed key on the same instance still does.
+pub fn bind_host_keys_to_instance(hosts: &[&str], port: u16, instance_id: u64) {
+    if port == 0 {
+        return;
+    }
+    let mut seen = Vec::new();
+    for host in hosts {
+        let host = host.trim();
+        if host.is_empty() || seen.contains(&host) {
+            continue;
+        }
+        seen.push(host);
+        let Some(pin) = known_hosts_path(host, port) else {
+            continue;
+        };
+        if bind_pin_to_instance(&pin, instance_id) {
+            info!(
+                "Forgot SSH host key pinned for a previous machine at {}:{} (now instance {})",
+                host, port, instance_id
+            );
+        }
     }
 }
 
@@ -629,7 +695,7 @@ impl RemoteExec {
                 self.ssh_host, self.ssh_port, pin
             );
             return Err(AppError::Command(format!(
-                "SSH host key changed for {}:{}. The server presented a different host key than the one pinned on first connection ({pin}). If this instance was recreated, forget the pinned key and retry; otherwise this may indicate a man-in-the-middle attack.",
+                "SSH host key changed for {}:{}. The server presented a different host key than the one pinned on first connection ({pin}). If this instance was recreated, refresh your rented instances and retry so the new key can be pinned; otherwise this may indicate a man-in-the-middle attack.",
                 self.ssh_host, self.ssh_port
             )));
         }
@@ -1023,6 +1089,31 @@ fn render_command(command: &Command) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binding_pin_drops_keys_from_other_instances_only() {
+        let dir = std::env::temp_dir().join(format!("noland-pin-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let pin = dir.join("1.2.3.4_22");
+
+        // Legacy pin without an owner is treated as stale.
+        fs::write(&pin, "old-key").unwrap();
+        assert!(bind_pin_to_instance(&pin, 7));
+        assert!(!pin.exists());
+
+        // Same instance keeps its pin.
+        fs::write(&pin, "key-7").unwrap();
+        assert!(!bind_pin_to_instance(&pin, 7));
+        assert!(pin.exists());
+
+        // Another instance at the same endpoint drops it.
+        assert!(bind_pin_to_instance(&pin, 8));
+        assert!(!pin.exists());
+        assert_eq!(fs::read_to_string(pin_owner_path(&pin)).unwrap(), "8");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn redacts_sunshine_creds() {

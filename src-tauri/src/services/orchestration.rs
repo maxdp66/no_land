@@ -904,6 +904,11 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
     });
     let ssh_password = context.state.read().await.ssh.ssh_password.clone();
     let target_user = sanitize_ssh_user(&context.config.audio_target_user);
+    super::remote_exec::bind_host_keys_to_instance(
+        &[&instance.ssh_host, &instance.public_ip],
+        instance.ssh_port,
+        instance.id,
+    );
     let mut remote = RemoteExec {
         ssh_user,
         ssh_host: instance.public_ip.clone(),
@@ -1905,6 +1910,11 @@ async fn run_existing_instance_orchestration(
     });
     let ssh_password = context.state.read().await.ssh.ssh_password.clone();
     let target_user = sanitize_ssh_user(&context.config.audio_target_user);
+    super::remote_exec::bind_host_keys_to_instance(
+        &[&instance.ssh_host, &instance.public_ip],
+        instance.ssh_port,
+        instance.id,
+    );
     let mut remote = RemoteExec {
         ssh_user,
         ssh_host: instance.public_ip.clone(),

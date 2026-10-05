@@ -395,6 +395,11 @@ async fn build_remote_exec_from_state(context: &AppContext) -> Result<RemoteExec
 
     let vast = CloudClient::from_context(context).await?;
     let instance = vast.get_instance(instance_id).await?;
+    crate::services::remote_exec::bind_host_keys_to_instance(
+        &[&instance.ssh_host, &instance.public_ip],
+        instance.ssh_port,
+        instance.id,
+    );
     let ssh_host = if instance.public_ip.trim().is_empty() {
         instance.ssh_host.clone()
     } else {
