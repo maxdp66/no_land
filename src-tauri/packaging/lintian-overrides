@@ -1,3 +1,4 @@
-# eBPF bytecode loaded by the VM observer agent. It targets the kernel BPF VM, not the
-# package architecture, so lintian's ELF machine check does not apply.
-noland-connect: binary-from-other-architecture [usr/lib/Noland Connect/vm-agents/*/noland_observer.bpf.o]
+# vm-agents holds binaries deployed to the remote cloud VM, not run on this machine:
+# x86_64 Linux agents (also shipped in the arm64 package) and eBPF bytecode for the
+# observer. Their ELF architecture intentionally differs from the package architecture.
+noland-connect: binary-from-other-architecture [usr/lib/Noland Connect/vm-agents/*]
