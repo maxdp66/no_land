@@ -74,7 +74,7 @@ Low-latency remote gaming session
 - **Secure networking** — integrates WireGuard and an embedded userspace tunnel path.
 - **Low-latency Linux audio** — configures PipeWire/WirePlumber profiles for Sunshine streaming and includes fallback profiles for underruns/crackling.
 - **Native streaming work** — documents frame pipelines, queues, timing domains, packet sizing, reconnect behaviour, and latency optimization experiments.
-- **Cross-platform release pipeline** — GitHub Actions builds desktop binaries for macOS, Windows, and Linux.
+- **Cross-platform release pipeline** — GitHub Actions builds, signs, and scans desktop binaries for macOS, Windows, and Linux on both x64 and arm64.
 
 ## Stack
 
@@ -111,36 +111,22 @@ Project documentation lives in `docs/`:
 ## Project layout
 
 ```text
-src/
-  app/
-  components/
-  features/
-    onboarding/
-    dashboard/
-    servers/
-    provisioning/
-    settings/
-  lib/
-  store/
-
-src-tauri/src/
-  main.rs
-  commands/
-  models/
-  errors/
-  services/
-    state_store.rs
-    vast_api.rs
-    location.rs
-    offer_selector.rs
-    ssh_keys.rs
-    instance_manager.rs
-    remote_exec.rs
-    wireguard.rs
-    sunshine.rs
-    moonlight.rs
-    nvidia_headless.rs
-    orchestration.rs
+src/                      React + TypeScript desktop UI
+  features/               onboarding, dashboard, servers, provisioning, settings,
+                          launch-library, moonlight, shared-storage, ...
+  store/                  Zustand state
+src-tauri/                Tauri 2 / Rust desktop backend
+  src/commands/           Tauri commands exposed to the UI
+  src/services/           provisioning, Vast.ai, SSH, Sunshine, Moonlight,
+                          WireGuard, NVIDIA headless, shared storage, ...
+  src/moonlight/          native streaming client integration
+network-agent/            network quality probe and telemetry agent
+network-contracts/        versioned network control/state/probe contracts
+state-agent/              app-state tracking for the disposable VM (shared storage)
+mic-sidecar/              desktop microphone media sidecar
+vm-cloud-mic-agent/       PipeWire virtual microphone source on the cloud VM
+scripts/                  build, packaging, and release helpers
+docs/                     architecture, flows, and operations docs
 ```
 
 ## Run locally
@@ -169,15 +155,27 @@ Production build:
 npm run tauri:build
 ```
 
+Tests:
+
+```bash
+npm test                 # frontend (Vitest)
+npm run test:unit        # network-contracts and network-agent
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
 ## Desktop releases
 
-The repository includes GitHub Actions workflows for direct-download desktop builds.
+Releases are produced by GitHub Actions (`.github/workflows/release.yml`) on every push to `main`:
 
-- macOS artifacts include `.dmg` / app archives;
-- Windows builds produce installer artifacts;
-- Linux builds produce AppImage and package formats when supported by the runner;
-- pushes to `main` can update a rolling prerelease;
-- version tags can publish release artifacts.
+1. validation, security scanning (CodeQL, Trivy, Gitleaks, dependency audits), and the full test suite;
+2. the next version is computed by bumping the patch number of the latest `vX.Y.Z` tag (or the version in `src-tauri/tauri.conf.json` if that is newer) — tags that are not plain `vX.Y.Z` are ignored;
+3. signed builds for six targets: macOS, Windows, and Linux, each on x64 and arm64;
+4. package validation: every platform artifact must be present, packaged filesystems are scanned for high/critical vulnerabilities, and checksums plus a CycloneDX SBOM are generated;
+5. the version tag is created and a GitHub release is published with the validated assets.
+
+Artifacts include `.dmg` / app archives on macOS, installers on Windows, and AppImage / `.deb` packages on Linux.
+
+A nightly workflow (`nightly.yml`) runs the same pipeline as a rehearsal without tagging or publishing anything. Pull requests run `ci.yml`.
 
 Release builds always require `TAURI_SIGNING_PRIVATE_KEY` for updater signatures. Apple Developer ID signing/notarization and Azure Authenticode signing are used when their secrets are configured; without them macOS builds are ad-hoc signed and Windows installers are unsigned, and the privileged network helper is then only trusted when it is unsigned in the same way as the app.
 
