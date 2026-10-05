@@ -99,6 +99,7 @@ import {
 import { PROVISIONING_ORDER } from "../lib/constants";
 import type { BlockingActionState } from "../components/ui/BlockingLoaderOverlay";
 import type {
+  InstancePreemptedEvent,
   AutoShutdownSettings,
   ManualLocationInput,
   MoonlightPreferences,
@@ -151,6 +152,9 @@ import type {
 
 interface AppStore {
   appState: PersistedAppState | null;
+  preemptedInstances: InstancePreemptedEvent[];
+  reportPreemptedInstance: (event: InstancePreemptedEvent) => void;
+  dismissPreemptedInstance: (instanceId: number) => void;
   offers: OfferCandidate[];
   rentedInstances: RentedInstanceSummary[];
   logs: ProvisioningEvent[];
@@ -1062,6 +1066,18 @@ export const useAppStore = create<AppStore>((set, get) => {
 
   return {
     appState: null,
+    preemptedInstances: [],
+    reportPreemptedInstance: (event) =>
+      set((state) => ({
+        preemptedInstances: [
+          ...state.preemptedInstances.filter((item) => item.instanceId !== event.instanceId),
+          event,
+        ],
+      })),
+    dismissPreemptedInstance: (instanceId) =>
+      set((state) => ({
+        preemptedInstances: state.preemptedInstances.filter((item) => item.instanceId !== instanceId),
+      })),
     offers: [],
     rentedInstances: [],
     logs: [],

@@ -15,10 +15,15 @@ import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { StreamWindowScreen } from "../features/moonlight/StreamWindowScreen";
 import { useAppStore } from "../store/appStore";
 import appLogo from "../public/noland.png";
-import { moonlightGetSessionState, refreshStateAgentIndex, subscribeSpendAlerts } from "../lib/backend";
+import {
+  moonlightGetSessionState,
+  refreshStateAgentIndex,
+  subscribeInstancePreempted,
+  subscribeSpendAlerts,
+} from "../lib/backend";
 import { buildDiagnosticIssueUrl } from "../lib/githubIssue";
 import { isRunningInTauri } from "../lib/tauri";
-import { notifyInstancesNeedAttention } from "../lib/instanceNotifications";
+import { notifyInstancePreempted, notifyInstancesNeedAttention } from "../lib/instanceNotifications";
 import { notifySpendAlert } from "../lib/spendNotifications";
 
 import {
@@ -624,22 +629,28 @@ export function App() {
       return;
     }
     let disposed = false;
-    let unlisten: (() => void) | null = null;
+    const unlisteners: Array<() => void> = [];
+    const keep = (stop: () => void) => {
+      if (disposed) {
+        stop();
+      } else {
+        unlisteners.push(stop);
+      }
+    };
     void subscribeSpendAlerts((alert) => {
       void notifySpendAlert(alert);
       if (alert.kind === "auto_stopped") {
         void useAppStore.getState().loadRentedInstances();
       }
-    }).then((stop) => {
-      if (disposed) {
-        stop();
-      } else {
-        unlisten = stop;
-      }
-    });
+    }).then(keep);
+    void subscribeInstancePreempted((event) => {
+      useAppStore.getState().reportPreemptedInstance(event);
+      void notifyInstancePreempted(event);
+      void useAppStore.getState().loadRentedInstances();
+    }).then(keep);
     return () => {
       disposed = true;
-      unlisten?.();
+      unlisteners.forEach((stop) => stop());
     };
   }, [windowLabel, windowLabelResolved]);
 

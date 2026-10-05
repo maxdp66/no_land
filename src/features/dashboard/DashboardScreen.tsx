@@ -50,6 +50,7 @@ import { InstanceUploadModal } from "./InstanceUploadModal";
 import { TutorialModal } from "../onboarding/TutorialModal";
 import { SpendPanel } from "../spend/SpendPanel";
 import { PresetsCard } from "../presets/PresetsCard";
+import { PreemptionBanner } from "./PreemptionBanner";
 import { useAppStore } from "../../store/appStore";
 import { useSpendSummary } from "../spend/useSpendSummary";
 import { tutorialSteps } from "../onboarding/tutorialSteps";
@@ -296,6 +297,8 @@ export function DashboardScreen({
 
   const walletAmountLabel = vastWalletSummary?.displayAmount || "--";
   const { summary: spendSummary } = useSpendSummary();
+  const preemptedInstances = useAppStore((state) => state.preemptedInstances);
+  const dismissPreemptedInstance = useAppStore((state) => state.dismissPreemptedInstance);
 
   async function openExternalUrl(url: string) {
     try {
@@ -652,6 +655,15 @@ export function DashboardScreen({
             </ModalBody>
           </ModalFrame>
         )}
+
+        <PreemptionBanner
+          events={preemptedInstances}
+          onFindReplacement={(event) => {
+            dismissPreemptedInstance(event.instanceId);
+            void openServerPicker();
+          }}
+          onDismiss={dismissPreemptedInstance}
+        />
 
         <section>
           <SpendPanel summary={spendSummary} />

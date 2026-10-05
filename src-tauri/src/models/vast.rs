@@ -228,6 +228,14 @@ pub struct VastInstance {
     pub hosting_type: String,
     #[serde(default = "crate::models::provider::default_provider_name")]
     pub provider: String,
+    /// Rented as an interruptible (bid) instance.
+    #[serde(default)]
+    pub interruptible: bool,
+    /// State the provider is trying to keep the instance in.
+    #[serde(default)]
+    pub intended_status: String,
+    #[serde(default)]
+    pub status_message: String,
 }
 
 impl VastInstance {
@@ -328,6 +336,17 @@ impl VastInstance {
             image_runtype,
             hosting_type,
             provider: crate::models::provider::default_provider_name(),
+            interruptible: value
+                .get("is_bid")
+                .and_then(|raw| raw.as_bool().or_else(|| raw.as_i64().map(|v| v != 0)))
+                .unwrap_or(false),
+            intended_status: field_as_str(value, &["intended_status", "next_state"])
+                .unwrap_or_default()
+                .to_string(),
+            status_message: field_as_str(value, &["status_msg", "status_message"])
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
         })
     }
 
@@ -352,6 +371,22 @@ impl VastInstance {
         ]
         .iter()
         .any(|state| status.contains(state))
+    }
+
+    /// An interruptible instance the provider stopped because it was
+    /// outbid or reclaimed, while the user still wants it running.
+    pub fn looks_preempted(&self) -> bool {
+        let message = self.status_message.to_ascii_lowercase();
+        if message.contains("outbid") || message.contains("preempt") {
+            return true;
+        }
+        if !self.interruptible {
+            return false;
+        }
+        let actual = self.status.trim().to_ascii_lowercase();
+        let intended = self.intended_status.trim().to_ascii_lowercase();
+        intended == "running"
+            && matches!(actual.as_str(), "exited" | "stopped" | "inactive" | "offline")
     }
 
     pub fn is_inactive(&self) -> bool {
@@ -1087,5 +1122,28 @@ mod tests {
         assert!((instance.hourly_price - 1.0020740740740741).abs() < f64::EPSILON);
         assert!((instance.compute_hourly_price - 1.0).abs() < f64::EPSILON);
         assert!((instance.storage_hourly_price - 0.002074074074074074).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn interruptible_instance_stopped_against_intent_is_preempted() {
+        let instance = |status: &str, intended: &str, is_bid: bool| {
+            VastInstance::from_value(&json!({
+                "id": 1,
+                "actual_status": status,
+                "intended_status": intended,
+                "is_bid": is_bid,
+            }))
+            .unwrap()
+        };
+        assert!(instance("exited", "running", true).looks_preempted());
+        assert!(!instance("running", "running", true).looks_preempted());
+        assert!(!instance("exited", "stopped", true).looks_preempted(), "user stopped it");
+        assert!(!instance("exited", "running", false).looks_preempted(), "on-demand");
+
+        let outbid = VastInstance::from_value(&json!({
+            "id": 2, "actual_status": "exited", "status_msg": "Instance was outbid"
+        }))
+        .unwrap();
+        assert!(outbid.looks_preempted());
     }
 }

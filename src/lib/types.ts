@@ -1274,6 +1274,15 @@ export interface SpendSummary {
   months: MonthlySpend[];
 }
 
+export interface InstancePreemptedEvent {
+  instanceId: number;
+  label: string;
+  gpuName: string;
+  provider: string;
+  status: string;
+  message: string;
+}
+
 export interface SpendAlert {
   kind: "warning" | "exceeded" | "auto_stopped" | "auto_stop_failed";
   monthToDateUsd: number;

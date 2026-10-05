@@ -693,6 +693,9 @@ pub fn parse_instance(value: &Value, fallback_id: Option<&str>) -> Option<Tensor
             image_runtype: "vm".to_string(),
             hosting_type: "tensordock".to_string(),
             provider: CloudProviderKind::Tensordock.as_str().to_string(),
+            interruptible: false,
+            intended_status: String::new(),
+            status_message: String::new(),
         },
     })
 }

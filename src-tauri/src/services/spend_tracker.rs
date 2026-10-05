@@ -29,6 +29,59 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 pub const SPEND_UPDATED_EVENT: &str = "spend:updated";
 pub const SPEND_ALERT_EVENT: &str = "spend:alert";
+pub const INSTANCE_PREEMPTED_EVENT: &str = "instance:preempted";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstancePreemptedEvent {
+    pub instance_id: u64,
+    pub label: String,
+    pub gpu_name: String,
+    pub provider: String,
+    pub status: String,
+    pub message: String,
+}
+
+/// Instances already reported as preempted, so each interruption is
+/// announced once. An id is forgotten when the instance runs again or
+/// disappears.
+fn preempted_reported() -> &'static std::sync::Mutex<std::collections::HashSet<u64>> {
+    static REPORTED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+        std::sync::OnceLock::new();
+    REPORTED.get_or_init(Default::default)
+}
+
+/// Newly preempted instances, updating the reported set.
+pub fn newly_preempted(
+    instances: &[VastInstance],
+    reported: &mut std::collections::HashSet<u64>,
+) -> Vec<InstancePreemptedEvent> {
+    reported.retain(|id| {
+        instances
+            .iter()
+            .any(|instance| instance.id == *id && instance.looks_preempted())
+    });
+    instances
+        .iter()
+        .filter(|instance| instance.looks_preempted() && reported.insert(instance.id))
+        .map(|instance| InstancePreemptedEvent {
+            instance_id: instance.id,
+            label: if instance.label.trim().is_empty() {
+                format!("Instance {}", instance.id)
+            } else {
+                instance.label.clone()
+            },
+            gpu_name: instance.gpu_name.clone(),
+            provider: instance.provider.clone(),
+            status: instance.status.clone(),
+            message: if instance.status_message.is_empty() {
+                "This interruptible instance was stopped by the provider (outbid or reclaimed). Its disk is kept and billed for storage.".to_string()
+            } else {
+                instance.status_message.clone()
+            },
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +153,22 @@ async fn tick(app: &AppHandle, context: &AppContext) {
             return;
         }
     };
+    let preempted = {
+        let mut reported = preempted_reported()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        newly_preempted(&instances, &mut reported)
+    };
+    for event in preempted {
+        warn!(
+            instance_id = event.instance_id,
+            "interruptible instance appears preempted"
+        );
+        if let Err(error) = app.emit(INSTANCE_PREEMPTED_EVENT, event) {
+            warn!("failed to emit preemption event: {error}");
+        }
+    }
+
     let observations = observations_from_instances(&instances);
     record_and_enforce(app, context, observations).await;
 }
@@ -241,6 +310,22 @@ mod tests {
         for status in ["exited", "stopped", "inactive", "offline", ""] {
             assert!(!status_is_billed_as_running(status), "{status}");
         }
+    }
+
+    #[test]
+    fn preemption_is_reported_once_per_interruption() {
+        let instance = |status: &str| {
+            VastInstance::from_value(&serde_json::json!({
+                "id": 5, "actual_status": status, "intended_status": "running", "is_bid": true
+            }))
+            .unwrap()
+        };
+        let mut reported = std::collections::HashSet::new();
+        assert_eq!(newly_preempted(&[instance("exited")], &mut reported).len(), 1);
+        assert!(newly_preempted(&[instance("exited")], &mut reported).is_empty());
+        // Running again clears it, so a later interruption is reported.
+        assert!(newly_preempted(&[instance("running")], &mut reported).is_empty());
+        assert_eq!(newly_preempted(&[instance("exited")], &mut reported).len(), 1);
     }
 
     #[test]

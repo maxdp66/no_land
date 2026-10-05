@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invokeSafe } from "./tauri";
 import type {
   BudgetSettings,
+  InstancePreemptedEvent,
   SpendAlert,
   SpendSummary,
   AutoShutdownSettings,
@@ -95,6 +96,13 @@ export async function subscribeSpendUpdates(
   callback: (summary: SpendSummary) => void,
 ): Promise<() => void> {
   const unlisten = await listen<SpendSummary>("spend:updated", ({ payload }) => callback(payload));
+  return () => unlisten();
+}
+
+export async function subscribeInstancePreempted(
+  callback: (event: InstancePreemptedEvent) => void,
+): Promise<() => void> {
+  const unlisten = await listen<InstancePreemptedEvent>("instance:preempted", ({ payload }) => callback(payload));
   return () => unlisten();
 }
 
