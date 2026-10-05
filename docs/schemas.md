@@ -25,6 +25,7 @@ Top-level fields:
 - `postWireguardSetup`
 - `orchestrationState`
 - `spend` (see `docs/spend-tracking.md`)
+- `priceAlerts`: GPU/region/price watches (`models/price_alerts.rs`)
 - `serverPresets`: saved server preferences + stream quality (`models/presets.rs`)
 - `providerInstanceRefs`: local id ↔ provider id links (see `docs/providers.md`)
 - `lastError`

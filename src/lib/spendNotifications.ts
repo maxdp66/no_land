@@ -4,7 +4,7 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { isNotificationEnabled } from "./notificationPreferences";
-import type { SpendAlert } from "./types";
+import type { PriceAlertMatch, SpendAlert } from "./types";
 
 export function spendAlertTitle(alert: SpendAlert): string {
   switch (alert.kind) {
@@ -41,5 +41,29 @@ export async function notifySpendAlert(alert: SpendAlert): Promise<void> {
     });
   } catch (error) {
     console.warn("[spend] native notification failed", error);
+  }
+}
+
+export async function notifyPriceAlert(match: PriceAlertMatch): Promise<void> {
+  if (!isNotificationEnabled("priceAlerts")) {
+    return;
+  }
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      granted = (await requestPermission()) === "granted";
+    }
+    if (!granted) {
+      return;
+    }
+    const provider = match.provider === "tensordock" ? "TensorDock" : "Vast.ai";
+    await sendNotification({
+      title: `No Land — ${match.gpuName} at $${match.hourlyPrice.toFixed(2)}/hr`,
+      body: `${provider} · ${match.locationLabel || "unknown location"} is at or below your $${match.maxHourlyUsd.toFixed(2)}/hr target. Open No Land to rent it.`,
+      icon: "icons/icon.png",
+      silent: false,
+    });
+  } catch (error) {
+    console.warn("[price-watch] native notification failed", error);
   }
 }

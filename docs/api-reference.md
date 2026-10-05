@@ -27,6 +27,14 @@ The UI uses wrappers in `src/lib/backend.ts`, which map to Tauri commands in `sr
 - `delete_server_preset`
 - `apply_server_preset` (copies server preferences and stream bitrate/fps/resolution, clears the selected offer)
 
+## Price alerts
+
+- `save_price_alert` (gpuQuery substring, countryCode or empty, maxHourlyUsd; max 10; runs a check immediately)
+- `delete_price_alert`
+- `set_price_alert_enabled`
+- event: `price:alert` (`PriceAlertMatch`), raised by `services/price_watch.rs` every 15 minutes at most once per watch per 6 hours unless the price drops further
+- `instance:preempted` (`InstancePreemptedEvent`): interruptible instance stopped by the provider while intended to run
+
 ## Spend and budget
 
 - `get_spend_summary`

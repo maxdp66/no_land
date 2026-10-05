@@ -19,12 +19,13 @@ import {
   moonlightGetSessionState,
   refreshStateAgentIndex,
   subscribeInstancePreempted,
+  subscribePriceAlerts,
   subscribeSpendAlerts,
 } from "../lib/backend";
 import { buildDiagnosticIssueUrl } from "../lib/githubIssue";
 import { isRunningInTauri } from "../lib/tauri";
 import { notifyInstancePreempted, notifyInstancesNeedAttention } from "../lib/instanceNotifications";
-import { notifySpendAlert } from "../lib/spendNotifications";
+import { notifyPriceAlert, notifySpendAlert } from "../lib/spendNotifications";
 
 import {
   checkForAppUpdate,
@@ -643,6 +644,7 @@ export function App() {
         void useAppStore.getState().loadRentedInstances();
       }
     }).then(keep);
+    void subscribePriceAlerts((match) => void notifyPriceAlert(match)).then(keep);
     void subscribeInstancePreempted((event) => {
       useAppStore.getState().reportPreemptedInstance(event);
       void notifyInstancePreempted(event);

@@ -15,6 +15,7 @@ describe("notificationPreferences", () => {
       instances: true,
       provisioning: true,
       budget: true,
+      priceAlerts: true,
     });
     expect(isNotificationEnabled("network")).toBe(true);
   });
@@ -31,6 +32,7 @@ describe("notificationPreferences", () => {
       instances: true,
       provisioning: true,
       budget: true,
+      priceAlerts: true,
     });
     expect(isNotificationEnabled("storage")).toBe(false);
   });
@@ -44,6 +46,7 @@ describe("notificationPreferences", () => {
       instances: false,
       provisioning: true,
       budget: true,
+      priceAlerts: true,
     });
   });
 
@@ -55,6 +58,7 @@ describe("notificationPreferences", () => {
       instances: true,
       provisioning: false,
       budget: true,
+      priceAlerts: true,
     });
   });
 
@@ -66,6 +70,7 @@ describe("notificationPreferences", () => {
       instances: true,
       provisioning: true,
       budget: true,
+      priceAlerts: true,
     });
   });
 

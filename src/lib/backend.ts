@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invokeSafe } from "./tauri";
 import type {
   BudgetSettings,
+  PriceAlertMatch,
   InstancePreemptedEvent,
   SpendAlert,
   SpendSummary,
@@ -70,6 +71,29 @@ import type {
 
 export async function getAppState(): Promise<PersistedAppState> {
   return invokeSafe<PersistedAppState>("get_app_state");
+}
+
+export async function savePriceAlert(input: {
+  gpuQuery: string;
+  countryCode: string;
+  maxHourlyUsd: number;
+}): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("save_price_alert", input);
+}
+
+export async function deletePriceAlert(alertId: string): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("delete_price_alert", { alertId });
+}
+
+export async function setPriceAlertEnabled(alertId: string, enabled: boolean): Promise<PersistedAppState> {
+  return invokeSafe<PersistedAppState>("set_price_alert_enabled", { alertId, enabled });
+}
+
+export async function subscribePriceAlerts(
+  callback: (match: PriceAlertMatch) => void,
+): Promise<() => void> {
+  const unlisten = await listen<PriceAlertMatch>("price:alert", ({ payload }) => callback(payload));
+  return () => unlisten();
 }
 
 export async function saveServerPreset(name: string): Promise<PersistedAppState> {

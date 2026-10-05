@@ -1,4 +1,4 @@
-export type NotificationKind = "network" | "storage" | "instances" | "provisioning" | "budget";
+export type NotificationKind = "network" | "storage" | "instances" | "provisioning" | "budget" | "priceAlerts";
 
 export type NotificationPreferences = Record<NotificationKind, boolean>;
 
@@ -9,6 +9,7 @@ const DEFAULTS: NotificationPreferences = {
   instances: true,
   provisioning: true,
   budget: true,
+  priceAlerts: true,
 };
 
 export function getNotificationPreferences(): NotificationPreferences {
@@ -20,6 +21,7 @@ export function getNotificationPreferences(): NotificationPreferences {
       instances: parsed?.instances ?? DEFAULTS.instances,
       provisioning: parsed?.provisioning ?? DEFAULTS.provisioning,
       budget: parsed?.budget ?? DEFAULTS.budget,
+      priceAlerts: parsed?.priceAlerts ?? DEFAULTS.priceAlerts,
     };
   } catch {
     return { ...DEFAULTS };

@@ -467,6 +467,12 @@ fn main() {
             app.manage(moonlight_manager);
             moonlight::platform::performance_overlay::start(app.handle().clone(), performance_overlay);
 
+            let price_app = app.handle().clone();
+            let price_context = context.clone();
+            tauri::async_runtime::spawn(async move {
+                services::price_watch::run_price_watch(price_app, price_context).await;
+            });
+
             let spend_app = app.handle().clone();
             let spend_context = context.clone();
             tauri::async_runtime::spawn(async move {
@@ -584,6 +590,9 @@ fn main() {
             save_server_preset,
             delete_server_preset,
             apply_server_preset,
+            save_price_alert,
+            delete_price_alert,
+            set_price_alert_enabled,
             update_budget_settings,
             complete_onboarding,
             refresh_state_agent_index,

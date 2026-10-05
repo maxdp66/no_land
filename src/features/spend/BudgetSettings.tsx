@@ -4,6 +4,7 @@ import { Card } from "../../components/ui/Card";
 import { InputField } from "../../components/ui/InputField";
 import { updateBudgetSettings } from "../../lib/backend";
 import { errorMessage } from "../../lib/errorMessage";
+import { PriceAlertsSettings } from "./PriceAlertsSettings";
 import { SpendPanel } from "./SpendPanel";
 import { useSpendSummary } from "./useSpendSummary";
 
@@ -106,6 +107,7 @@ export function BudgetSettings() {
         </div>
       </Card>
       <SpendPanel summary={summary} />
+      <PriceAlertsSettings />
     </div>
   );
 }

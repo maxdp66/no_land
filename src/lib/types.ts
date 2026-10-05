@@ -727,7 +727,29 @@ export interface PersistedAppState {
   orchestrationState: OrchestrationState;
   connectionProvider: ConnectionProvider;
   serverPresets?: ServerPreset[];
+  priceAlerts?: PriceAlert[];
   lastError: string | null;
+}
+
+export interface PriceAlert {
+  id: string;
+  gpuQuery: string;
+  countryCode: string;
+  maxHourlyUsd: number;
+  enabled: boolean;
+  lastNotifiedAt: string | null;
+  lastNotifiedPrice: number | null;
+}
+
+export interface PriceAlertMatch {
+  alertId: string;
+  gpuQuery: string;
+  maxHourlyUsd: number;
+  offerId: number;
+  provider: string;
+  gpuName: string;
+  locationLabel: string;
+  hourlyPrice: number;
 }
 
 export interface ServerPreset {
