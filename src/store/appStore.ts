@@ -2536,9 +2536,9 @@ export const useAppStore = create<AppStore>((set, get) => {
       return await runInstanceTask(
         {
           key: "instance.services.reboot",
-          label: "Rebooting instance services",
+          label: "Restarting instance services",
           detail:
-            "Restarting Sunshine, networking, and related streaming services.",
+            "Restarting the display, desktop, audio, and Sunshine without rebooting the VM.",
           blocking: true,
         },
         async () => await rebootInstanceServices(instanceId),

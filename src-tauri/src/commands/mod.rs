@@ -4515,56 +4515,7 @@ pub async fn reboot_instance_services(
     let result = async {
         let remote = build_remote_exec_for_instance(context.inner(), instance_id).await?;
         let target_user = context.config.audio_target_user.clone();
-        let (endpoint_tx, endpoint_rx) = tokio::sync::watch::channel(remote.clone());
-        let refresh_context = context.inner().clone();
-        let base_remote = remote.clone();
-        let endpoint_refresh = tokio::spawn(async move {
-            loop {
-                if let Ok(vast) = CloudClient::from_context(&refresh_context).await {
-                    if let Ok(instances) = vast.list_instances().await {
-                        if let Some(instance) =
-                            instances.into_iter().find(|item| item.id == instance_id)
-                        {
-                            if !instance.ssh_host.trim().is_empty() && instance.ssh_port != 0 {
-                                let updated_remote = RemoteExec {
-                                    ssh_host: instance.ssh_host.clone(),
-                                    ssh_port: instance.ssh_port,
-                                    ..base_remote.clone()
-                                };
-                                let _ = endpoint_tx.send(updated_remote);
-                                let _ = refresh_context
-                                    .update_state(|state| {
-                                        if let Some(server) = state
-                                            .provisioned_servers
-                                            .iter_mut()
-                                            .find(|server| server.instance_id == instance_id)
-                                        {
-                                            server.ssh_host = instance.ssh_host.clone();
-                                            server.ssh_port = instance.ssh_port;
-                                            server.status = instance.status.clone();
-                                        }
-                                        if state.instance.instance_id == Some(instance_id) {
-                                            state.instance.ssh_host = instance.ssh_host.clone();
-                                            state.instance.ssh_port = instance.ssh_port;
-                                            state.instance.status = instance.status.clone();
-                                        }
-                                    })
-                                    .await;
-                            }
-                        }
-                    }
-                }
-                tokio::time::sleep(Duration::from_secs(10)).await;
-            }
-        });
-        let result = RebootHelperService::reboot_and_reinitialize_with_endpoint_updates(
-            &remote,
-            &target_user,
-            endpoint_rx,
-        )
-        .await;
-        endpoint_refresh.abort();
-        result
+        RebootHelperService::restart_services(&remote, &target_user).await
     }
     .await;
     InstanceLifecycleService::release_lock(instance_id).await;
