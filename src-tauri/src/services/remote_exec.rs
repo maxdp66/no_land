@@ -45,6 +45,13 @@ fn resolve_ssh_binary(tool: &str) -> AppResult<std::path::PathBuf> {
 const APP_IDENTIFIER: &str = "com.noland.connect";
 const KNOWN_HOSTS_DIR_NAME: &str = "ssh-known-hosts";
 const REDACTED: &str = "[REDACTED]";
+/// Seconds ssh may spend establishing the TCP connection (`ConnectTimeout`).
+const SSH_CONNECT_TIMEOUT_SECS: u64 = 10;
+/// Smallest overall budget a timed ssh exec gets. The connect window plus
+/// key exchange, auth and PAM session setup can take well over 10s on a
+/// busy VM, so a caller's short budget for an instant command (`id -u`)
+/// must not be consumed by the handshake alone.
+const MIN_SSH_EXEC_BUDGET: Duration = Duration::from_secs(SSH_CONNECT_TIMEOUT_SECS + 20);
 
 /// Directory holding one pinned known_hosts file per SSH endpoint (host + port).
 fn known_hosts_root() -> Option<PathBuf> {
@@ -534,6 +541,7 @@ impl RemoteExec {
             .map_err(|error| AppError::Command(format!("Could not create terminal: {error}")))?;
         let mut command = CommandBuilder::new(&ssh_binary);
         let port = self.ssh_port.to_string();
+        let connect_timeout = format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}");
         for arg in ["-tt", "-p", &port, "-i", &self.private_key_path] {
             command.arg(arg);
         }
@@ -542,7 +550,7 @@ impl RemoteExec {
         }
         for arg in [
             "-o",
-            "ConnectTimeout=10",
+            &connect_timeout,
             "-o",
             "ConnectionAttempts=1",
             "-o",
@@ -732,7 +740,7 @@ impl RemoteExec {
             .arg(&self.private_key_path)
             .args(self.host_key_options())
             .arg("-o")
-            .arg("ConnectTimeout=10")
+            .arg(format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"))
             .arg("-o")
             .arg("ServerAliveInterval=30")
             .arg("-o")
@@ -750,7 +758,7 @@ impl RemoteExec {
 
     fn ssh_with_key(&self, remote_command: &str, timeout: Duration) -> AppResult<ExecOutput> {
         let command = self.build_ssh_command(remote_command, "exec")?;
-        self.check_host_key(run_with_timeout(command, Some(timeout))?)
+        self.check_host_key(run_with_timeout(command, Some(ssh_exec_budget(timeout)))?)
     }
 
     fn ssh_with_key_and_stdin(
@@ -760,7 +768,11 @@ impl RemoteExec {
         timeout: Duration,
     ) -> AppResult<ExecOutput> {
         let command = self.build_ssh_command(remote_command, "exec (redacted stdin)")?;
-        self.check_host_key(run_with_timeout_input(command, Some(timeout), Some(input))?)
+        self.check_host_key(run_with_timeout_input(
+            command,
+            Some(ssh_exec_budget(timeout)),
+            Some(input),
+        )?)
     }
 
     fn ssh_with_key_until_complete(&self, remote_command: &str) -> AppResult<ExecOutput> {
@@ -873,6 +885,10 @@ fn ensure_command_available(command: &str) -> AppResult<()> {
         "`{command}` is not available in the app bundle. {}",
         os.install_hint_for_tool(command)
     )))
+}
+
+fn ssh_exec_budget(requested: Duration) -> Duration {
+    requested.max(MIN_SSH_EXEC_BUDGET)
 }
 
 fn run_with_timeout(command: Command, timeout: Option<Duration>) -> AppResult<ExecOutput> {
@@ -1089,6 +1105,19 @@ fn render_command(command: &Command) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_exec_budget_never_falls_inside_the_connect_window() {
+        assert_eq!(
+            ssh_exec_budget(Duration::from_secs(10)),
+            MIN_SSH_EXEC_BUDGET
+        );
+        assert!(MIN_SSH_EXEC_BUDGET > Duration::from_secs(SSH_CONNECT_TIMEOUT_SECS));
+        assert_eq!(
+            ssh_exec_budget(Duration::from_secs(300)),
+            Duration::from_secs(300)
+        );
+    }
 
     #[test]
     fn binding_pin_drops_keys_from_other_instances_only() {
