@@ -305,6 +305,31 @@ pub struct SunshineService {
 
 const SUNSHINE_SUPPORT_PACKAGES: &[&str] = &["pipewire", "pipewire-pulse", "wireplumber"];
 
+/// Root shell snippet that disables desktop screen locking for every user.
+/// Cloud users have no known password, so a lock screen strands the session.
+/// `[$i]` makes the KDE group immutable so per-user configs cannot re-enable it.
+/// Must stay free of single quotes: it is embedded in `bash -lc '...'` scripts.
+pub(crate) const DISABLE_SCREEN_LOCK_SH: &str = r#"mkdir -p /etc/xdg
+cat > /etc/xdg/kscreenlockerrc <<"NOLAND_LOCK_EOF"
+[Daemon][$i]
+Autolock=false
+LockOnResume=false
+Timeout=0
+NOLAND_LOCK_EOF
+if command -v dconf >/dev/null 2>&1; then
+  mkdir -p /etc/dconf/profile /etc/dconf/db/local.d
+  [ -f /etc/dconf/profile/user ] || printf "user-db:user\nsystem-db:local\n" > /etc/dconf/profile/user
+  cat > /etc/dconf/db/local.d/00-noland-no-lock <<"NOLAND_LOCK_EOF"
+[org/gnome/desktop/screensaver]
+lock-enabled=false
+[org/gnome/desktop/session]
+idle-delay=uint32 0
+[org/gnome/desktop/lockdown]
+disable-lock-screen=true
+NOLAND_LOCK_EOF
+  dconf update 2>/dev/null || true
+fi"#;
+
 impl SunshineService {
     pub fn render_config(&self, detected_capture: &str, detected_output: &str) -> String {
         let mut values = BTreeMap::from([
@@ -820,12 +845,14 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
+  {disable_lock}
   systemctl enable --now noland-desktop.service
   echo DESKTOP_SERVICE_READY
 else
   echo DESKTOP_EXECUTABLE_NOT_FOUND
 fi'"#,
-                        user = target_user
+                        user = target_user,
+                        disable_lock = DISABLE_SCREEN_LOCK_SH,
                     ),
                     Duration::from_secs(30),
                 )
@@ -843,7 +870,7 @@ fi'"#,
             tokio::task::spawn_blocking(move || {
                 remote.ssh(
                     &format!(
-                        "sudo -u {user} bash -lc 'mkdir -p {home}/.config; export XDG_RUNTIME_DIR=/run/user/$(id -u {user}); kwriteconfig5 --file kscreenlockerrc --group Daemon --key Autolock false 2>/dev/null || true; kwriteconfig5 --file kscreenlockerrc --group Daemon --key LockOnResume false 2>/dev/null || true; kwriteconfig5 --file kwinrc --group Compositing --key Enabled false 2>/dev/null || true' && echo 'SCREEN_LOCK_DISABLED' || echo 'SCREEN_LOCK_CONFIG_FAILED'",
+                        "sudo -u {user} bash -lc 'mkdir -p {home}/.config; export XDG_RUNTIME_DIR=/run/user/$(id -u {user}); KWC=$(command -v kwriteconfig6 || command -v kwriteconfig5 || true); if [ -n \"$KWC\" ]; then $KWC --file kscreenlockerrc --group Daemon --key Autolock false; $KWC --file kscreenlockerrc --group Daemon --key LockOnResume false; $KWC --file kscreenlockerrc --group Daemon --key Timeout 0; $KWC --file kwinrc --group Compositing --key Enabled false; fi 2>/dev/null || true' && echo 'SCREEN_LOCK_DISABLED' || echo 'SCREEN_LOCK_CONFIG_FAILED'",
                         user = target_user,
                         home = target_home
                     ),
@@ -2341,5 +2368,37 @@ mod credential_tests {
             curl_user_config("admin", "p\"a\\ss\nx"),
             "user = \"admin:p\\\"a\\\\ss\\nx\"\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod screen_lock_tests {
+    use super::DISABLE_SCREEN_LOCK_SH;
+
+    #[test]
+    fn disable_screen_lock_snippet_is_embeddable_and_valid_bash() {
+        assert!(!DISABLE_SCREEN_LOCK_SH.contains('\''));
+        let wrapped = format!("bash -n -c '{DISABLE_SCREEN_LOCK_SH}'");
+        let status = std::process::Command::new("bash")
+            .args(["-c", &wrapped])
+            .status()
+            .expect("bash available");
+        assert!(status.success());
+    }
+
+    #[test]
+    fn disable_screen_lock_writes_immutable_kde_group() {
+        let dir = std::env::temp_dir().join(format!("noland-lock-{}", std::process::id()));
+        let script = DISABLE_SCREEN_LOCK_SH
+            .replace("/etc/", &format!("{}/", dir.display()))
+            .replace("command -v dconf", "false");
+        let status = std::process::Command::new("bash")
+            .args(["-c", &script])
+            .status()
+            .expect("bash available");
+        assert!(status.success());
+        let written = std::fs::read_to_string(dir.join("xdg/kscreenlockerrc")).unwrap();
+        assert!(written.starts_with("[Daemon][$i]\nAutolock=false\n"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

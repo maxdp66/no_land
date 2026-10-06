@@ -120,10 +120,11 @@ export function InstanceCardActions({
           className="w-full"
           disabled={actionDisabled}
           loading={loadingKey === "instance.services.reboot"}
-          loadingText="Rebooting..."
+          loadingText="Restarting..."
+          title="Restart the desktop, audio, and Sunshine without rebooting the VM"
           onClick={() => onReboot(instance.instanceId)}
         >
-          Reboot
+          Restart Services
         </Button>
 
         <Button

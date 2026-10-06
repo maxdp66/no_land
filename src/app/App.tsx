@@ -30,6 +30,7 @@ import { notifyPriceAlert, notifySpendAlert } from "../lib/spendNotifications";
 import {
   checkForAppUpdate,
   installPendingAppUpdate,
+  skipAppUpdateVersion,
   type AppUpdateInfo,
   type AppUpdateProgress,
 } from "../lib/updateChecker";
@@ -299,9 +300,11 @@ function ProvisioningRoute() {
 function UpdateAvailableModal({
   update,
   onDismiss,
+  onSkipVersion,
 }: {
   update: AppUpdateInfo;
   onDismiss: () => void;
+  onSkipVersion: () => void;
 }) {
   const [progress, setProgress] = useState<AppUpdateProgress | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
@@ -370,8 +373,11 @@ function UpdateAvailableModal({
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <SocialLinks />
           <div className="flex justify-end gap-3">
+            <Button variant="ghost" onClick={onSkipVersion} disabled={progress !== null}>
+              Skip this version
+            </Button>
             <Button variant="ghost" onClick={onDismiss} disabled={progress !== null}>
-              Skip for now
+              Remind me later
             </Button>
             <Button
               variant="secondary"
@@ -922,6 +928,10 @@ export function App() {
         <UpdateAvailableModal
           update={availableUpdate}
           onDismiss={() => setAvailableUpdate(null)}
+          onSkipVersion={() => {
+            skipAppUpdateVersion(availableUpdate.latestVersion);
+            setAvailableUpdate(null);
+          }}
         />
       )}
 

@@ -1,95 +1,130 @@
 use std::time::Duration;
 
-use tokio::{sync::watch, time::sleep};
+use tokio::time::{sleep, timeout};
 use tracing::{info, warn};
 
 use crate::utils::shell;
 use crate::{
     errors::{AppError, AppResult},
-    services::remote_exec::RemoteExec,
+    services::{remote_exec::RemoteExec, sunshine::DISABLE_SCREEN_LOCK_SH},
 };
+
+/// Upper bound for the whole restart so the UI never waits indefinitely.
+const RESTART_BUDGET: Duration = Duration::from_secs(5 * 60);
 
 pub struct RebootHelperService;
 
 impl RebootHelperService {
-    pub async fn reboot_and_reinitialize_with_endpoint_updates(
-        remote: &RemoteExec,
-        target_user: &str,
-        endpoint_updates: watch::Receiver<RemoteExec>,
-    ) -> AppResult<String> {
-        Self::reboot_and_reinitialize_internal(remote, target_user, Some(endpoint_updates)).await
+    /// Restarts the streaming stack (Xorg, desktop, audio, display mode and
+    /// Sunshine) without rebooting the VM, so SSH and the endpoint stay put.
+    pub async fn restart_services(remote: &RemoteExec, target_user: &str) -> AppResult<String> {
+        info!(
+            event = "instance_services_restart_start",
+            target_user = target_user,
+            "Service restart started"
+        );
+
+        let result = timeout(
+            RESTART_BUDGET,
+            Self::restart_services_inner(remote, target_user),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(AppError::Timeout(format!(
+                "Restarting instance services did not finish within {} seconds",
+                RESTART_BUDGET.as_secs()
+            )))
+        });
+
+        match &result {
+            Ok(_) => info!(
+                event = "instance_services_restart_success",
+                target_user = target_user,
+                "Service restart completed successfully"
+            ),
+            Err(error) => warn!(
+                event = "instance_services_restart_failure",
+                target_user = target_user,
+                error = %error,
+                "Service restart failed"
+            ),
+        }
+        result
     }
 
-    async fn reboot_and_reinitialize_internal(
-        remote: &RemoteExec,
-        target_user: &str,
-        mut endpoint_updates: Option<watch::Receiver<RemoteExec>>,
-    ) -> AppResult<String> {
-        info!(
-            event = "instance_reboot_start",
-            target_user = target_user,
-            "Reboot helper started"
+    async fn restart_services_inner(remote: &RemoteExec, target_user: &str) -> AppResult<String> {
+        Self::preflight(remote, target_user).await?;
+        Self::stop_streaming_stack(remote, target_user).await?;
+        Self::ensure_noland_xorg(remote).await?;
+        Self::start_desktop_session(remote).await?;
+        Self::ensure_display_mode(remote).await?;
+        let display_xauthority = Self::wait_for_user_display_ready(remote, target_user).await?;
+        Self::ensure_audio_ready(remote, target_user).await?;
+        Self::recover_sunshine(remote, target_user, &display_xauthority).await?;
+        Ok("Instance services restarted and back online".to_string())
+    }
+
+    /// Stops Sunshine and the desktop, restarts the user audio services, and
+    /// restarts Xorg. Each stop is bounded and falls back to SIGKILL so a hung
+    /// unit cannot stall the restart.
+    async fn stop_streaming_stack(remote: &RemoteExec, target_user: &str) -> AppResult<()> {
+        let script = format!(
+            r#"set -uo pipefail
+TARGET_USER={target_user}
+TARGET_UID=$(id -u "$TARGET_USER")
+stop_unit() {{
+    systemctl cat "$1" >/dev/null 2>&1 || return 0
+    if ! timeout 20 systemctl stop "$1"; then
+        systemctl kill --signal=KILL "$1" 2>/dev/null || true
+        systemctl reset-failed "$1" 2>/dev/null || true
+    fi
+}}
+stop_unit sunshine.service
+stop_unit noland-desktop.service
+sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="/run/user/$TARGET_UID" \
+    timeout 20 systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service 2>/dev/null || true
+if [ "$(systemctl show noland-xorg.service --property=LoadState --value 2>/dev/null)" = "loaded" ]; then
+    stop_unit noland-xorg.service
+    pkill -9 -x Xorg 2>/dev/null || true
+fi
+echo STREAMING_STACK_STOPPED"#,
+            target_user = shell::quote(target_user),
         );
-
-        let old_boot_id = Self::preflight_reboot(remote, target_user).await?;
-        let schedule_script =
-            "set -euo pipefail; sync; nohup sh -c 'sleep 3; systemctl reboot' >/dev/null 2>&1 & echo REBOOT_SCHEDULED";
-        let schedule_command = format!("sudo bash -lc {}", shell::quote(schedule_script));
-        let output = Self::probe_ssh(remote, &schedule_command, Duration::from_secs(30)).await?;
-        let stdout = output.stdout.trim();
-        let stderr = output.stderr.trim();
-
-        info!(
-            event = "instance_reboot_output",
-            target_user = target_user,
-            old_boot_id = %old_boot_id,
-            status_code = output.status_code,
-            stdout = %stdout,
-            stderr = %stderr,
-            "Reboot helper scheduling output"
-        );
-
-        if output.status_code != 0
-            || !output
-                .stdout
-                .lines()
-                .any(|line| line.trim() == "REBOOT_SCHEDULED")
-        {
-            warn!(
-                event = "instance_reboot_failure",
-                target_user = target_user,
-                status_code = output.status_code,
-                "Reboot helper failed to schedule reboot"
-            );
+        let command = format!("sudo bash -lc {}", shell::quote(&script));
+        let output = Self::probe_ssh(remote, &command, Duration::from_secs(90)).await?;
+        if !output.stdout.contains("STREAMING_STACK_STOPPED") {
             return Err(AppError::Provisioning(format!(
-                "Reboot helper failed to schedule reboot: stdout: {} | stderr: {}",
-                stdout, stderr
+                "Could not stop instance services for restart. stdout: {} | stderr: {}",
+                output.stdout.trim(),
+                filtered_probe_stderr(&output.stderr)
             )));
         }
-
-        Self::wait_for_reboot_disconnect(remote).await?;
-        let active_remote =
-            Self::wait_for_reboot_reconnect(remote, &old_boot_id, endpoint_updates.as_mut())
-                .await?;
-        Self::wait_for_system_ready(&active_remote).await?;
-        Self::ensure_noland_xorg_after_reboot(&active_remote).await?;
-        Self::ensure_display_mode_after_reboot(&active_remote).await?;
-        let display_xauthority =
-            Self::wait_for_user_display_ready(&active_remote, target_user).await?;
-        Self::ensure_audio_ready_after_reboot(&active_remote, target_user).await?;
-        Self::recover_sunshine_after_reboot(&active_remote, target_user, &display_xauthority)
-            .await?;
-
-        info!(
-            event = "instance_reboot_success",
-            target_user = target_user,
-            "Reboot helper completed successfully"
-        );
-
-        Ok("Instance reboot completed and services are back online".to_string())
+        info!("Streaming services stopped for restart");
+        Ok(())
     }
 
-    async fn preflight_reboot(remote: &RemoteExec, target_user: &str) -> AppResult<String> {
+    async fn start_desktop_session(remote: &RemoteExec) -> AppResult<()> {
+        let script = r#"set -euo pipefail
+if ! systemctl cat noland-desktop.service >/dev/null 2>&1; then
+    echo NOLAND_DESKTOP_NOT_INSTALLED
+    exit 0
+fi
+systemctl start noland-desktop.service
+echo NOLAND_DESKTOP_STARTED"#;
+        let command = format!("sudo bash -lc {}", shell::quote(script));
+        let output = Self::probe_ssh(remote, &command, Duration::from_secs(45)).await?;
+        if output.status_code != 0 {
+            return Err(AppError::Provisioning(format!(
+                "The desktop session could not be started. stdout: {} | stderr: {}",
+                output.stdout.trim(),
+                filtered_probe_stderr(&output.stderr)
+            )));
+        }
+        info!(result = %output.stdout.trim(), "Desktop session start requested");
+        Ok(())
+    }
+
+    async fn preflight(remote: &RemoteExec, target_user: &str) -> AppResult<()> {
         let script = format!(
             r#"set -euo pipefail
 TARGET_USER={target_user}
@@ -109,6 +144,7 @@ if [ "$(systemctl show sunshine.service --property=LoadState --value 2>/dev/null
     exit 2
 fi
 loginctl enable-linger "$TARGET_USER" 2>/dev/null || true
+{disable_lock}
 systemctl enable sunshine.service >/dev/null
 if [ "$(systemctl show noland-xorg.service --property=LoadState --value 2>/dev/null)" = "loaded" ]; then
     systemctl mask gdm sddm lightdm 2>/dev/null || true
@@ -148,169 +184,28 @@ if [ -z "$DISPLAY_XAUTH" ]; then
 fi
 echo "REBOOT_PREFLIGHT_OK user=$TARGET_USER home=$TARGET_HOME xauthority=$DISPLAY_XAUTH""#,
             target_user = shell::quote(target_user),
+            disable_lock = DISABLE_SCREEN_LOCK_SH,
         );
         let command = format!("sudo bash -lc {}", shell::quote(&script));
         let output = Self::probe_ssh(remote, &command, Duration::from_secs(30)).await?;
 
         if output.status_code != 0 || !output.stdout.contains("REBOOT_PREFLIGHT_OK") {
             return Err(AppError::Provisioning(format!(
-                "Reboot preflight failed: stdout: {} | stderr: {}",
+                "Restart preflight failed: stdout: {} | stderr: {}",
                 output.stdout.trim(),
                 filtered_probe_stderr(&output.stderr)
             )));
         }
 
-        let boot_id = "fire-and-forget".to_string();
-
         info!(
             target_user = target_user,
-            boot_id = %boot_id,
             preflight = %output.stdout.trim(),
-            "Reboot preflight passed"
-        );
-        Ok(boot_id)
-    }
-
-    async fn wait_for_reboot_disconnect(remote: &RemoteExec) -> AppResult<()> {
-        const DISCONNECT_ATTEMPTS: usize = 20;
-        const DISCONNECT_INTERVAL: Duration = Duration::from_secs(2);
-
-        for attempt in 1..=DISCONNECT_ATTEMPTS {
-            match Self::probe_ssh(
-                remote,
-                "echo reboot-disconnect-probe",
-                Duration::from_secs(8),
-            )
-            .await
-            {
-                Ok(probe) => {
-                    if probe.status_code != 0 || looks_like_reboot_disconnect(&probe.stderr) {
-                        info!(
-                            attempt = attempt,
-                            "Observed SSH disconnect after reboot trigger"
-                        );
-                        return Ok(());
-                    }
-                }
-                Err(error) => {
-                    info!(
-                        attempt = attempt,
-                        error = %error,
-                        "Treating SSH probe failure as reboot disconnect"
-                    );
-                    return Ok(());
-                }
-            }
-
-            sleep(DISCONNECT_INTERVAL).await;
-        }
-
-        warn!(
-            "Did not observe an SSH disconnect after scheduling reboot; continuing to reconnect wait"
+            "Restart preflight passed"
         );
         Ok(())
     }
 
-    async fn wait_for_reboot_reconnect(
-        remote: &RemoteExec,
-        _old_boot_id: &str,
-        endpoint_updates: Option<&mut watch::Receiver<RemoteExec>>,
-    ) -> AppResult<RemoteExec> {
-        const RECONNECT_ATTEMPTS: usize = 36;
-        const RECONNECT_INTERVAL: Duration = Duration::from_secs(10);
-        const BOOT_ID_COMMAND: &str = "echo REBOOT_BOOT_ID=fire-and-forget";
-
-        let endpoint_updates = endpoint_updates;
-        for attempt in 1..=RECONNECT_ATTEMPTS {
-            let active_remote = endpoint_updates
-                .as_ref()
-                .map(|updates| updates.borrow().clone())
-                .unwrap_or_else(|| remote.clone());
-            match Self::probe_ssh(&active_remote, BOOT_ID_COMMAND, Duration::from_secs(15)).await {
-                Ok(probe) => {
-                    if probe.status_code == 0 {
-                        info!(
-                            attempt = attempt,
-                            ssh_host = %active_remote.ssh_host,
-                            "Observed successful SSH connection after reboot trigger (fire-and-forget mode)"
-                        );
-                        return Ok(active_remote);
-                    }
-                    warn!(
-                        attempt = attempt,
-                        status_code = probe.status_code,
-                        stderr = %filtered_probe_stderr(&probe.stderr),
-                        "Waiting for SSH to become fully ready..."
-                    );
-                }
-                Err(error) => {
-                    warn!(
-                        attempt = attempt,
-                        error = %error,
-                        "Waiting for SSH to return after reboot"
-                    );
-                }
-            }
-            sleep(RECONNECT_INTERVAL).await;
-        }
-
-        Err(AppError::Timeout(
-            "Timed out waiting for the instance to reconnect via SSH after reboot (fire-and-forget mode).".to_string()
-        ))
-    }
-
-    async fn wait_for_system_ready(remote: &RemoteExec) -> AppResult<()> {
-        const SYSTEM_STATE_ATTEMPTS: usize = 30;
-        const SYSTEM_STATE_INTERVAL: Duration = Duration::from_secs(2);
-
-        for attempt in 1..=SYSTEM_STATE_ATTEMPTS {
-            match Self::probe_ssh(
-                remote,
-                "systemctl is-system-running 2>/dev/null",
-                Duration::from_secs(10),
-            )
-            .await
-            {
-                Ok(state) => {
-                    let stdout = state.stdout.trim();
-                    if is_ready_system_state(stdout) {
-                        info!(
-                            attempt = attempt,
-                            system_state = stdout,
-                            status_code = state.status_code,
-                            "Systemd reached a ready state"
-                        );
-                        return Ok(());
-                    }
-
-                    warn!(
-                        attempt = attempt,
-                        system_state = stdout,
-                        status_code = state.status_code,
-                        stderr = %filtered_probe_stderr(&state.stderr),
-                        "Waiting for systemd to finish booting after reboot"
-                    );
-                }
-                Err(error) => {
-                    warn!(
-                        attempt = attempt,
-                        error = %error,
-                        "Waiting for systemd to finish booting after reboot"
-                    );
-                }
-            }
-            sleep(SYSTEM_STATE_INTERVAL).await;
-        }
-
-        let failed_units = Self::collect_failed_units(remote).await;
-
-        Err(AppError::Timeout(format!(
-            "SSH came back after reboot, but the system never reached a ready state. Failed units: {}",
-            failed_units.trim()
-        )))
-    }
-
-    async fn ensure_noland_xorg_after_reboot(remote: &RemoteExec) -> AppResult<()> {
+    async fn ensure_noland_xorg(remote: &RemoteExec) -> AppResult<()> {
         let script = r#"set -euo pipefail
 if [ "$(systemctl show noland-xorg.service --property=LoadState --value 2>/dev/null)" != "loaded" ]; then
     echo NOLAND_XORG_NOT_INSTALLED
@@ -340,17 +235,17 @@ exit 1"#;
         }
         if output.status_code != 0 || !output.stdout.contains("NOLAND_XORG_READY") {
             return Err(AppError::Provisioning(format!(
-                "noland-xorg could not be enabled and started after reboot. stdout: {} | stderr: {}",
+                "noland-xorg could not be enabled and started after restart. stdout: {} | stderr: {}",
                 output.stdout.trim(),
                 filtered_probe_stderr(&output.stderr)
             )));
         }
 
-        info!("noland-xorg is enabled and active after reboot");
+        info!("noland-xorg is enabled and active after restart");
         Ok(())
     }
 
-    async fn ensure_display_mode_after_reboot(remote: &RemoteExec) -> AppResult<()> {
+    async fn ensure_display_mode(remote: &RemoteExec) -> AppResult<()> {
         let script = r#"set -euo pipefail
 if ! systemctl cat noland-display-mode.service >/dev/null 2>&1; then
     echo NOLAND_DISPLAY_MODE_NOT_INSTALLED
@@ -368,36 +263,16 @@ echo NOLAND_DISPLAY_MODE_READY"#;
         let output = Self::probe_ssh(remote, &command, Duration::from_secs(50)).await?;
         if output.status_code != 0 {
             return Err(AppError::Provisioning(format!(
-                "The selected display mode could not be restored after reboot. stdout: {} | stderr: {}",
+                "The selected display mode could not be restored after restart. stdout: {} | stderr: {}",
                 output.stdout.trim(),
                 filtered_probe_stderr(&output.stderr)
             )));
         }
-        info!("Persistent display mode restored after reboot");
+        info!("Persistent display mode restored after restart");
         Ok(())
     }
 
-    async fn collect_failed_units(remote: &RemoteExec) -> String {
-        match Self::probe_ssh(
-            remote,
-            "systemctl --failed --no-pager --plain 2>/dev/null || true",
-            Duration::from_secs(10),
-        )
-        .await
-        {
-            Ok(output) => {
-                let trimmed = output.stdout.trim();
-                if trimmed.is_empty() {
-                    "<none>".to_string()
-                } else {
-                    trimmed.to_string()
-                }
-            }
-            Err(error) => format!("<unavailable: {error}>"),
-        }
-    }
-
-    async fn recover_sunshine_after_reboot(
+    async fn recover_sunshine(
         remote: &RemoteExec,
         target_user: &str,
         display_xauthority: &str,
@@ -407,12 +282,12 @@ echo NOLAND_DISPLAY_MODE_READY"#;
 TARGET_USER={target_user}
 DISPLAY_XAUTH={display_xauthority}
 if [ ! -s "$DISPLAY_XAUTH" ]; then
-    echo SUNSHINE_POST_REBOOT_FAIL
+    echo SUNSHINE_POST_RESTART_FAIL
     echo "XAUTHORITY_MISSING_OR_EMPTY=$DISPLAY_XAUTH"
     exit 1
 fi
 if ! sudo -u "$TARGET_USER" env DISPLAY=:0 XAUTHORITY="$DISPLAY_XAUTH" xrandr --listmonitors >/dev/null 2>&1; then
-    echo SUNSHINE_POST_REBOOT_FAIL
+    echo SUNSHINE_POST_RESTART_FAIL
     echo "DISPLAY_NOT_READY xauthority=$DISPLAY_XAUTH"
     exit 1
 fi
@@ -441,7 +316,7 @@ else
     CURRENT_LOGS=$(journalctl -u sunshine.service -b --no-pager -n 120 2>/dev/null || true)
 fi
 if [ "$PROC_COUNT" != "1" ] || [ "$WEB_OK" != "1" ] || [ "$RTSP_OK" != "1" ] || ! systemctl is-active --quiet sunshine.service; then
-    echo SUNSHINE_POST_REBOOT_FAIL
+    echo SUNSHINE_POST_RESTART_FAIL
     echo "PROC_COUNT=$PROC_COUNT WEB_OK=$WEB_OK RTSP_OK=$RTSP_OK"
     systemctl status sunshine.service --no-pager 2>/dev/null || true
     printf '%s\n' "$CURRENT_LOGS"
@@ -450,20 +325,20 @@ if [ "$PROC_COUNT" != "1" ] || [ "$WEB_OK" != "1" ] || [ "$RTSP_OK" != "1" ] || 
     exit 1
 fi
 if printf '%s\n' "$CURRENT_LOGS" | grep -Eqi 'Unable to open display|Failed to (open|create).*display|Could not open.*display'; then
-    echo SUNSHINE_POST_REBOOT_FAIL
+    echo SUNSHINE_POST_RESTART_FAIL
     echo OPEN_DISPLAY_ERROR_IN_CURRENT_INVOCATION
     printf '%s\n' "$CURRENT_LOGS"
     exit 1
 fi
-echo "SUNSHINE_POST_REBOOT_OK web=47990 rtsp=48010 xauthority=$DISPLAY_XAUTH""#,
+echo "SUNSHINE_POST_RESTART_OK web=47990 rtsp=48010 xauthority=$DISPLAY_XAUTH""#,
             target_user = shell::quote(target_user),
             display_xauthority = shell::quote(display_xauthority),
         );
         let restart_command = format!("sudo bash -lc {}", shell::quote(&script));
         let output = Self::probe_ssh(remote, &restart_command, Duration::from_secs(90)).await?;
-        if output.status_code != 0 || !output.stdout.contains("SUNSHINE_POST_REBOOT_OK") {
+        if output.status_code != 0 || !output.stdout.contains("SUNSHINE_POST_RESTART_OK") {
             return Err(AppError::Provisioning(format!(
-                "Sunshine failed post-reboot recovery using DISPLAY=:0 and XAUTHORITY={}. stdout: {} | stderr: {}",
+                "Sunshine failed post-restart recovery using DISPLAY=:0 and XAUTHORITY={}. stdout: {} | stderr: {}",
                 display_xauthority,
                 output.stdout.trim(),
                 filtered_probe_stderr(&output.stderr)
@@ -473,15 +348,12 @@ echo "SUNSHINE_POST_REBOOT_OK web=47990 rtsp=48010 xauthority=$DISPLAY_XAUTH""#,
         info!(
             target_user = target_user,
             display_xauthority = display_xauthority,
-            "Sunshine recovered after reboot; web and RTSP listeners are ready"
+            "Sunshine recovered after restart; web and RTSP listeners are ready"
         );
         Ok(())
     }
 
-    async fn ensure_audio_ready_after_reboot(
-        remote: &RemoteExec,
-        target_user: &str,
-    ) -> AppResult<()> {
+    async fn ensure_audio_ready(remote: &RemoteExec, target_user: &str) -> AppResult<()> {
         let target_uid = Self::resolve_user_uid(remote, target_user).await?;
         let runtime_dir = format!("/run/user/{target_uid}");
         let bus_path = format!("{runtime_dir}/bus");
@@ -500,7 +372,7 @@ echo "SUNSHINE_POST_REBOOT_OK web=47990 rtsp=48010 xauthority=$DISPLAY_XAUTH""#,
         if first.status_code == 0 && first.stdout.contains("AUDIO_READY") {
             info!(
                 target_user = target_user,
-                "Post-reboot audio stack is ready"
+                "Post-restart audio stack is ready"
             );
             return Ok(());
         }
@@ -509,7 +381,7 @@ echo "SUNSHINE_POST_REBOOT_OK web=47990 rtsp=48010 xauthority=$DISPLAY_XAUTH""#,
             target_user = target_user,
             stdout = %first.stdout.trim(),
             stderr = %filtered_probe_stderr(&first.stderr),
-            "Post-reboot audio stack not ready; attempting one recovery pass"
+            "Post-restart audio stack not ready; attempting one recovery pass"
         );
 
         let repair_script = format!(
@@ -573,7 +445,7 @@ run_user pactl set-default-sink sunshine_audio
         if second.status_code == 0 && second.stdout.contains("AUDIO_READY") {
             info!(
                 target_user = target_user,
-                "Post-reboot audio stack recovered successfully"
+                "Post-restart audio stack recovered successfully"
             );
             return Ok(());
         }
@@ -590,7 +462,7 @@ run_user pactl set-default-sink sunshine_audio
         let diag = Self::probe_ssh(remote, &diag_command, Duration::from_secs(20)).await?;
 
         Err(AppError::Provisioning(format!(
-            "Post-reboot audio recovery failed: sunshine_audio sink missing or audio services inactive. check1: {} | check2: {} | diagnostics: {} | stderr: {}",
+            "Post-restart audio recovery failed: sunshine_audio sink missing or audio services inactive. check1: {} | check2: {} | diagnostics: {} | stderr: {}",
             first.stdout.trim(),
             second.stdout.trim(),
             diag.stdout.trim(),
@@ -640,7 +512,7 @@ exit 1"#,
                             attempt = attempt,
                             target_user = target_user,
                             xauthority = xauthority,
-                            "User display became ready after reboot"
+                            "User display became ready after restart"
                         );
                         return Ok(xauthority);
                     }
@@ -656,7 +528,7 @@ exit 1"#,
                         target_user = target_user,
                         status_code = output.status_code,
                         stderr = %filtered_probe_stderr(&output.stderr),
-                        "Waiting for user display path to become ready after reboot"
+                        "Waiting for user display path to become ready after restart"
                     );
                 }
                 Err(error) => {
@@ -664,7 +536,7 @@ exit 1"#,
                         attempt = attempt,
                         target_user = target_user,
                         error = %error,
-                        "Waiting for user display path to become ready after reboot"
+                        "Waiting for user display path to become ready after restart"
                     );
                 }
             }
@@ -672,7 +544,7 @@ exit 1"#,
         }
 
         Err(AppError::Timeout(format!(
-            "User display did not become ready after reboot using DISPLAY=:0 with /etc/X11/.Xauthority-noland or {target_home}/.Xauthority"
+            "User display did not become ready after restart using DISPLAY=:0 with /etc/X11/.Xauthority-noland or {target_home}/.Xauthority"
         )))
     }
 
@@ -721,46 +593,13 @@ exit 1"#,
     }
 }
 
-#[cfg(test)]
-const BOOT_ID_PREFIX: &str = "REBOOT_BOOT_ID=";
 const DISPLAY_XAUTHORITY_PREFIX: &str = "DISPLAY_XAUTHORITY=";
-
-#[cfg(test)]
-fn normalize_boot_id(value: &str) -> Option<String> {
-    let value = value.trim();
-    let parsed = uuid::Uuid::parse_str(value).ok()?;
-    (value.len() == 36).then(|| parsed.hyphenated().to_string())
-}
-
-#[cfg(test)]
-fn parse_marked_boot_id(stdout: &str) -> Option<String> {
-    stdout.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix(BOOT_ID_PREFIX)
-            .and_then(normalize_boot_id)
-    })
-}
-
-#[cfg(test)]
-fn boot_id_changed(old_boot_id: &str, new_boot_id: &str) -> bool {
-    match (
-        normalize_boot_id(old_boot_id),
-        normalize_boot_id(new_boot_id),
-    ) {
-        (Some(old_boot_id), Some(new_boot_id)) => old_boot_id != new_boot_id,
-        _ => false,
-    }
-}
 
 fn parse_display_xauthority(stdout: &str) -> Option<String> {
     stdout.lines().find_map(|line| {
         let path = line.trim().strip_prefix(DISPLAY_XAUTHORITY_PREFIX)?.trim();
         (!path.is_empty()).then(|| path.to_string())
     })
-}
-
-fn is_ready_system_state(stdout: &str) -> bool {
-    matches!(stdout.trim(), "running" | "degraded")
 }
 
 fn filtered_probe_stderr(stderr: &str) -> String {
@@ -779,29 +618,9 @@ fn filtered_probe_stderr(stderr: &str) -> String {
     }
 }
 
-fn looks_like_reboot_disconnect(stderr: &str) -> bool {
-    let normalized = filtered_probe_stderr(stderr).to_ascii_lowercase();
-    normalized.contains("connection refused")
-        || normalized.contains("connection reset")
-        || normalized.contains("connection timed out")
-        || normalized.contains("broken pipe")
-        || normalized.contains("no route to host")
-        || normalized.contains("operation timed out")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        boot_id_changed, filtered_probe_stderr, is_ready_system_state, parse_marked_boot_id,
-    };
-
-    #[test]
-    fn ready_states_allow_running_and_degraded() {
-        assert!(is_ready_system_state("running"));
-        assert!(is_ready_system_state("degraded"));
-        assert!(!is_ready_system_state("starting"));
-        assert!(!is_ready_system_state("maintenance"));
-    }
+    use super::{filtered_probe_stderr, parse_display_xauthority};
 
     #[test]
     fn known_hosts_warning_is_filtered_from_probe_stderr() {
@@ -810,31 +629,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_and_normalizes_marked_boot_id() {
-        let output = "preflight ok\nREBOOT_BOOT_ID=01234567-89AB-CDEF-0123-456789ABCDEF\n";
+    fn parses_display_xauthority_marker() {
         assert_eq!(
-            parse_marked_boot_id(output).as_deref(),
-            Some("01234567-89ab-cdef-0123-456789abcdef")
+            parse_display_xauthority("noise\nDISPLAY_XAUTHORITY=/etc/X11/.Xauthority-noland\n")
+                .as_deref(),
+            Some("/etc/X11/.Xauthority-noland")
         );
-    }
-
-    #[test]
-    fn rejects_missing_or_malformed_boot_id() {
-        assert_eq!(parse_marked_boot_id("reboot-online\n"), None);
-        assert_eq!(parse_marked_boot_id("REBOOT_BOOT_ID=not-a-uuid\n"), None);
-        assert_eq!(
-            parse_marked_boot_id("REBOOT_BOOT_ID=0123456789ab-cdef-0123-456789abcdef\n"),
-            None
-        );
-    }
-
-    #[test]
-    fn boot_id_comparison_requires_two_valid_different_ids() {
-        let old = "01234567-89ab-cdef-0123-456789abcdef";
-        let new = "fedcba98-7654-3210-fedc-ba9876543210";
-
-        assert!(!boot_id_changed(old, old));
-        assert!(boot_id_changed(old, new));
-        assert!(!boot_id_changed(old, "invalid"));
+        assert_eq!(parse_display_xauthority("DISPLAY_XAUTHORITY=\n"), None);
     }
 }
