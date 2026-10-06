@@ -474,6 +474,9 @@ mod tests {
         let foreign = crate::models::provider::foreign_local_id(CloudProviderKind::Tensordock, "x");
         let error = client.get_instance(foreign).await.unwrap_err();
         assert!(matches!(error, AppError::NotFound(_)), "{error}");
-        assert!(client.attach_ssh_key(foreign, "ssh-ed25519 AAAA").await.is_ok());
+        assert!(client
+            .attach_ssh_key(foreign, "ssh-ed25519 AAAA")
+            .await
+            .is_ok());
     }
 }

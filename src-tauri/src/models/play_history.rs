@@ -17,7 +17,12 @@ pub struct PlayStats {
     pub last_played_at: DateTime<Utc>,
 }
 
-pub fn record_launch(history: &mut Vec<PlayStats>, app_id: &str, display_name: &str, now: DateTime<Utc>) {
+pub fn record_launch(
+    history: &mut Vec<PlayStats>,
+    app_id: &str,
+    display_name: &str,
+    now: DateTime<Utc>,
+) {
     match history.iter_mut().find(|entry| entry.app_id == app_id) {
         Some(entry) => {
             entry.launch_count += 1;
@@ -40,7 +45,12 @@ pub fn record_launch(history: &mut Vec<PlayStats>, app_id: &str, display_name: &
     }
 }
 
-pub fn add_play_time(history: &mut [PlayStats], app_id: &str, started_at: DateTime<Utc>, ended_at: DateTime<Utc>) {
+pub fn add_play_time(
+    history: &mut [PlayStats],
+    app_id: &str,
+    started_at: DateTime<Utc>,
+    ended_at: DateTime<Utc>,
+) {
     let seconds = (ended_at - started_at).num_milliseconds() as f64 / 1000.0;
     if !(seconds > 0.0 && seconds <= MAX_SESSION_SECONDS) {
         return;

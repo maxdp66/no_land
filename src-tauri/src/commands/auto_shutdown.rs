@@ -5,9 +5,9 @@ use crate::{
     models::app_state::{AutoShutdownSettings, AutoShutdownState, PersistedAppState},
     services::{
         app_context::AppContext,
+        cloud_provider::CloudClient,
         instance_lifecycle::InstanceLifecycleService,
         lifecycle_agent::{LifecycleAgentProvisioner, LifecycleAgentStatus},
-        cloud_provider::CloudClient,
     },
 };
 

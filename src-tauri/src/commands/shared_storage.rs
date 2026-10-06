@@ -9,6 +9,7 @@ use crate::models::application_bundle::{
     SharedStorageTestResult, StorageProvider,
 };
 use crate::services::app_context::AppContext;
+use crate::services::cloud_provider::CloudClient;
 use crate::services::remote_exec::RemoteExec;
 use crate::services::shared_storage::object_storage::{
     resolve_b2_bucket, StorageCredential, B2_KEY_SCOPE_FIELD,
@@ -17,7 +18,6 @@ use crate::services::shared_storage::provider_profiles::{
     shared_profile_manager, SharedStorageProfileManager,
 };
 use crate::services::shared_storage::shared_storage_manager::SharedStorageManager;
-use crate::services::cloud_provider::CloudClient;
 
 fn get_profile_manager() -> std::sync::Arc<SharedStorageProfileManager> {
     shared_profile_manager()

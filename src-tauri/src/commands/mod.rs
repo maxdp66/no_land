@@ -25,13 +25,13 @@ pub use self::launch_library::{
 };
 pub use self::presets::{apply_server_preset, delete_server_preset, save_server_preset};
 pub use self::price_alerts::{delete_price_alert, save_price_alert, set_price_alert_enabled};
-pub use self::spend::{get_spend_summary, update_budget_settings};
 pub use self::shared_storage::{
     begin_oauth_authorization, cancel_oauth_authorization, complete_oauth_authorization,
     disconnect_shared_storage_profile, get_shared_storage_profiles, list_storage_providers,
     save_static_provider_credentials, set_active_shared_storage_profile,
     test_shared_storage_connection,
 };
+pub use self::spend::{get_spend_summary, update_budget_settings};
 
 use std::{
     collections::BTreeMap,
@@ -92,6 +92,7 @@ use crate::{
     services::{
         app_context::AppContext,
         clipboard,
+        cloud_provider::{CloudClient, OfferSearch},
         connection_manager::ConnectionManager,
         diagnostics::{write_diagnostic_report, DiagnosticReportResponse},
         display_profile::{
@@ -121,7 +122,6 @@ use crate::{
         sleep_inhibit::SleepInhibitService,
         ssh_keys::SshKeyService,
         sunshine::{generate_headless_edid_base64, EDID_MAX_REFRESH_HZ, EDID_MIN_REFRESH_HZ},
-        cloud_provider::{CloudClient, OfferSearch},
         vast_api::VastApiClient,
         wireguard::{
             locate_noland_net_helper_binary, locate_wintun_library,
@@ -2716,11 +2716,9 @@ pub async fn get_rented_instances(
 
     let listing = cloud.list_instances_partial().await;
     let instances_source = if listing.failed.is_empty() {
-        if let Err(error) = InstanceLifecycleService::reconcile_owned_instances(
-            context.inner(),
-            &listing.instances,
-        )
-        .await
+        if let Err(error) =
+            InstanceLifecycleService::reconcile_owned_instances(context.inner(), &listing.instances)
+                .await
         {
             warn!(
                 "get_rented_instances local state reconciliation failed (continuing): {}",
@@ -2861,7 +2859,9 @@ pub async fn update_tensordock_api_key(
     let trimmed = api_key.trim().to_string();
     if !trimmed.is_empty() {
         if trimmed.len() < 16 {
-            return Err(AppError::InvalidInput("TensorDock API key looks invalid".to_string()).into());
+            return Err(
+                AppError::InvalidInput("TensorDock API key looks invalid".to_string()).into(),
+            );
         }
         crate::services::tensordock_api::TensorDockApiClient::new(
             context.http_client.clone(),
@@ -3509,10 +3509,9 @@ fn validate_onboarding_payload(payload: &OnboardingPayload) -> Result<(), Fronte
     let vast_key = payload.vast_api_key.trim();
     let tensordock_key = payload.tensordock_api_key.trim();
     if vast_key.is_empty() && tensordock_key.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Add a Vast.ai or TensorDock API key".to_string(),
-        )
-        .into());
+        return Err(
+            AppError::InvalidInput("Add a Vast.ai or TensorDock API key".to_string()).into(),
+        );
     }
     if !vast_key.is_empty() && vast_key.len() < 16 {
         return Err(AppError::InvalidInput("Vast API key looks invalid".to_string()).into());

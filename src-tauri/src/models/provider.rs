@@ -159,9 +159,21 @@ mod tests {
     #[test]
     fn remembered_foreign_refs_resolve() {
         let mut refs = Vec::new();
-        assert!(remember_instance_ref(&mut refs, CloudProviderKind::Tensordock, "abc"));
-        assert!(!remember_instance_ref(&mut refs, CloudProviderKind::Tensordock, "abc"));
-        assert!(!remember_instance_ref(&mut refs, CloudProviderKind::Vast, "1"));
+        assert!(remember_instance_ref(
+            &mut refs,
+            CloudProviderKind::Tensordock,
+            "abc"
+        ));
+        assert!(!remember_instance_ref(
+            &mut refs,
+            CloudProviderKind::Tensordock,
+            "abc"
+        ));
+        assert!(!remember_instance_ref(
+            &mut refs,
+            CloudProviderKind::Vast,
+            "1"
+        ));
         let local = foreign_local_id(CloudProviderKind::Tensordock, "abc");
         let resolved = resolve_instance(&refs, local).unwrap();
         assert_eq!(resolved.provider, CloudProviderKind::Tensordock);

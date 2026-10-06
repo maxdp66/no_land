@@ -106,9 +106,11 @@ pub fn status_is_billed_as_running(status: &str) -> bool {
     {
         return false;
     }
-    ["running", "loading", "creating", "starting", "active", "ready"]
-        .iter()
-        .any(|state| status.contains(state))
+    [
+        "running", "loading", "creating", "starting", "active", "ready",
+    ]
+    .iter()
+    .any(|state| status.contains(state))
 }
 
 pub fn observations_from_instances(instances: &[VastInstance]) -> Vec<SpendObservation> {
@@ -321,11 +323,17 @@ mod tests {
             .unwrap()
         };
         let mut reported = std::collections::HashSet::new();
-        assert_eq!(newly_preempted(&[instance("exited")], &mut reported).len(), 1);
+        assert_eq!(
+            newly_preempted(&[instance("exited")], &mut reported).len(),
+            1
+        );
         assert!(newly_preempted(&[instance("exited")], &mut reported).is_empty());
         // Running again clears it, so a later interruption is reported.
         assert!(newly_preempted(&[instance("running")], &mut reported).is_empty());
-        assert_eq!(newly_preempted(&[instance("exited")], &mut reported).len(), 1);
+        assert_eq!(
+            newly_preempted(&[instance("exited")], &mut reported).len(),
+            1
+        );
     }
 
     #[test]

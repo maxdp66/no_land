@@ -107,7 +107,9 @@ impl TensorDockApiClient {
             .map_err(|error| AppError::Api(format!("TensorDock {method} {url} failed: {error}")))?;
         let status = response.status();
         let text = response.text().await.map_err(|error| {
-            AppError::Api(format!("TensorDock {method} {url} response read failed: {error}"))
+            AppError::Api(format!(
+                "TensorDock {method} {url} response read failed: {error}"
+            ))
         })?;
         let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text));
         info!(
@@ -696,7 +698,9 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                 hourly_price: compute + storage,
                 compute_hourly_price: compute,
                 storage_hourly_price: storage,
-                available_storage_gb: if max_storage.is_finite() && max_storage < f64::from(u32::MAX) {
+                available_storage_gb: if max_storage.is_finite()
+                    && max_storage < f64::from(u32::MAX)
+                {
                     max_storage as u32
                 } else {
                     storage_gb
@@ -798,8 +802,14 @@ fn port_forwards(attributes: &Value) -> Vec<(u16, u16, Option<String>)> {
     match raw {
         Some(Value::Array(items)) => {
             for item in items {
-                let internal = parse_port(get_any(item, &["internal_port", "internalPort", "internal"]));
-                let external = parse_port(get_any(item, &["external_port", "externalPort", "external"]));
+                let internal = parse_port(get_any(
+                    item,
+                    &["internal_port", "internalPort", "internal"],
+                ));
+                let external = parse_port(get_any(
+                    item,
+                    &["external_port", "externalPort", "external"],
+                ));
                 let protocol = item
                     .get("protocol")
                     .and_then(Value::as_str)
@@ -824,7 +834,11 @@ fn port_forwards(attributes: &Value) -> Vec<(u16, u16, Option<String>)> {
     out
 }
 
-fn forwarded_port(forwards: &[(u16, u16, Option<String>)], internal: u16, protocol: &str) -> Option<u16> {
+fn forwarded_port(
+    forwards: &[(u16, u16, Option<String>)],
+    internal: u16,
+    protocol: &str,
+) -> Option<u16> {
     forwards
         .iter()
         .find(|(port, _, proto)| {
@@ -846,11 +860,17 @@ pub fn parse_instance(value: &Value, fallback_id: Option<&str>) -> Option<Tensor
 
     let ip = string_any(attributes, &["ipAddress", "ip_address", "ip", "public_ip"]);
     let forwards = port_forwards(attributes);
-    let dedicated_ip = bool_any(attributes, &["useDedicatedIp", "dedicated_ip", "dedicatedIp"])
-        .unwrap_or(forwards.is_empty());
+    let dedicated_ip = bool_any(
+        attributes,
+        &["useDedicatedIp", "dedicated_ip", "dedicatedIp"],
+    )
+    .unwrap_or(forwards.is_empty());
     let mapped = |internal: u16, protocol: &str| -> u16 {
-        forwarded_port(&forwards, internal, protocol)
-            .unwrap_or(if dedicated_ip { internal } else { 0 })
+        forwarded_port(&forwards, internal, protocol).unwrap_or(if dedicated_ip {
+            internal
+        } else {
+            0
+        })
     };
     let ssh_port = mapped(22, "tcp").max(if ip.is_empty() { 0 } else { 22 });
     let wireguard_listen_port = 51820;
@@ -865,8 +885,11 @@ pub fn parse_instance(value: &Value, fallback_id: Option<&str>) -> Option<Tensor
         .unwrap_or_else(|| "Unknown GPU".to_string());
 
     let status = normalize_status(&string_any(attributes, &["status", "state"]));
-    let hourly = number_any(attributes, &["rateHourly", "rate_hourly", "hourly_rate", "price"])
-        .unwrap_or_default();
+    let hourly = number_any(
+        attributes,
+        &["rateHourly", "rate_hourly", "hourly_rate", "price"],
+    )
+    .unwrap_or_default();
     let label = string_any(attributes, &["name", "label"]);
 
     let local_id = foreign_local_id(CloudProviderKind::Tensordock, &remote_id);
@@ -959,7 +982,11 @@ mod tests {
     #[test]
     fn parses_location_offers_and_skips_unusable_gpus() {
         let offers = parse_locations(&locations_body(), 100);
-        assert_eq!(offers.len(), 2, "no-dedicated-IP and sold-out GPUs are skipped");
+        assert_eq!(
+            offers.len(),
+            2,
+            "no-dedicated-IP and sold-out GPUs are skipped"
+        );
 
         let rtx = &offers[0];
         assert_eq!(rtx.provider, "tensordock");
@@ -1169,7 +1196,10 @@ mod tests {
         assert!(instance.is_loading());
         assert_eq!(instance.ssh_port, 20022);
         assert_eq!(instance.wireguard_port, 20051);
-        assert_eq!(instance.network_probe_port, 0, "unforwarded UDP port is unavailable");
+        assert_eq!(
+            instance.network_probe_port, 0,
+            "unforwarded UDP port is unavailable"
+        );
     }
 
     #[test]

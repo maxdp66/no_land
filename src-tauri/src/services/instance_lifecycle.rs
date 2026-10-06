@@ -22,9 +22,9 @@ use crate::{
 
 use super::{
     app_context::AppContext,
+    cloud_provider::CloudClient,
     remote_exec::RemoteExec,
     shared_storage::shared_storage_manager::SharedStorageManager,
-    cloud_provider::CloudClient,
     wireguard::{remove_local_wireguard_config, teardown_local_wireguard_client},
 };
 

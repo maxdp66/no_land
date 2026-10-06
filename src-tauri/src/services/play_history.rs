@@ -41,12 +41,16 @@ pub fn mark_streaming(instance_id: u64) {
 /// Forget launches that never produced a stream.
 pub fn expire_unconfirmed(now: DateTime<Utc>) {
     plays().retain(|_, play| {
-        play.streaming
-            || (now - play.launched_at).num_seconds() < UNCONFIRMED_PLAY_TTL_SECONDS
+        play.streaming || (now - play.launched_at).num_seconds() < UNCONFIRMED_PLAY_TTL_SECONDS
     });
 }
 
-pub async fn record_launch(context: &AppContext, instance_id: u64, app_id: &str, display_name: &str) {
+pub async fn record_launch(
+    context: &AppContext,
+    instance_id: u64,
+    app_id: &str,
+    display_name: &str,
+) {
     let now = Utc::now();
     plays().insert(
         instance_id,

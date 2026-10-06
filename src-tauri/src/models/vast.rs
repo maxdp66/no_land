@@ -386,7 +386,10 @@ impl VastInstance {
         let actual = self.status.trim().to_ascii_lowercase();
         let intended = self.intended_status.trim().to_ascii_lowercase();
         intended == "running"
-            && matches!(actual.as_str(), "exited" | "stopped" | "inactive" | "offline")
+            && matches!(
+                actual.as_str(),
+                "exited" | "stopped" | "inactive" | "offline"
+            )
     }
 
     pub fn is_inactive(&self) -> bool {
@@ -1137,8 +1140,14 @@ mod tests {
         };
         assert!(instance("exited", "running", true).looks_preempted());
         assert!(!instance("running", "running", true).looks_preempted());
-        assert!(!instance("exited", "stopped", true).looks_preempted(), "user stopped it");
-        assert!(!instance("exited", "running", false).looks_preempted(), "on-demand");
+        assert!(
+            !instance("exited", "stopped", true).looks_preempted(),
+            "user stopped it"
+        );
+        assert!(
+            !instance("exited", "running", false).looks_preempted(),
+            "on-demand"
+        );
 
         let outbid = VastInstance::from_value(&json!({
             "id": 2, "actual_status": "exited", "status_msg": "Instance was outbid"
