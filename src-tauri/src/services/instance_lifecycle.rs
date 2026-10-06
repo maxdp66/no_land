@@ -22,9 +22,9 @@ use crate::{
 
 use super::{
     app_context::AppContext,
+    cloud_provider::CloudClient,
     remote_exec::RemoteExec,
     shared_storage::shared_storage_manager::SharedStorageManager,
-    cloud_provider::CloudClient,
     wireguard::{remove_local_wireguard_config, teardown_local_wireguard_client},
 };
 
@@ -121,6 +121,16 @@ impl InstanceLifecycleService {
         let owned_instance_ids = owned_instances.iter().map(|instance| instance.id).collect();
         Self::remove_local_instances_missing_from_owned_set(context, &owned_instance_ids).await?;
 
+        // The provider is the source of truth for which instance holds an SSH
+        // endpoint: drop host key pins left by a previous machine there.
+        for instance in owned_instances {
+            crate::services::remote_exec::bind_host_keys_to_instance(
+                &[&instance.ssh_host, &instance.public_ip],
+                instance.ssh_port,
+                instance.id,
+            );
+        }
+
         context
             .update_state(|state| {
                 for instance in owned_instances {
@@ -140,8 +150,12 @@ impl InstanceLifecycleService {
                         (state.instance.instance_id == Some(instance.id)).then_some(offer.id)
                     });
                     record.status = instance.status.clone();
-                    record.ssh_host = instance.ssh_host.clone();
-                    record.ssh_port = instance.ssh_port;
+                    // Keep the last known endpoint when a listing omits it
+                    // (TensorDock's list has no IP; details can fail).
+                    if !instance.ssh_host.trim().is_empty() && instance.ssh_port != 0 {
+                        record.ssh_host = instance.ssh_host.clone();
+                        record.ssh_port = instance.ssh_port;
+                    }
                     record.ssh_command = instance.ssh_command.clone();
                     record.hourly_price = instance.hourly_price;
                     record.compute_hourly_price = instance.compute_hourly_price;
@@ -187,6 +201,8 @@ impl InstanceLifecycleService {
         };
 
         for record in &removed_records {
+            crate::services::remote_exec::forget_host_keys(&[&record.ssh_host], record.ssh_port);
+
             if record.wireguard_config_path.trim().is_empty() {
                 continue;
             }
@@ -823,6 +839,11 @@ pub async fn build_remote_exec_for_instance(
     let ssh_password = state.ssh.ssh_password.clone();
 
     let instance = vast.get_instance(instance_id).await?;
+    crate::services::remote_exec::bind_host_keys_to_instance(
+        &[&instance.ssh_host, &instance.public_ip],
+        instance.ssh_port,
+        instance.id,
+    );
     let ssh_host = if instance.public_ip.trim().is_empty() {
         instance.ssh_host.clone()
     } else {

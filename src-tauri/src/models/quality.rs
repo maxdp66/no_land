@@ -137,8 +137,7 @@ impl QualityAccumulator {
             return None;
         }
         let count = f64::from(self.samples);
-        let avg_rtt_ms =
-            (self.rtt_samples > 0).then(|| self.rtt_sum / f64::from(self.rtt_samples));
+        let avg_rtt_ms = (self.rtt_samples > 0).then(|| self.rtt_sum / f64::from(self.rtt_samples));
         let avg_rtt_variance_ms = (self.variance_samples > 0)
             .then(|| self.variance_sum / f64::from(self.variance_samples));
         let avg_missing_frames_percent = self.missing_sum / count;
@@ -226,9 +225,9 @@ pub fn observed_quality(
 ) -> Option<ObservedQuality> {
     if let Some(host_id) = host_id {
         let host = summarize(
-            history.iter().filter(|record| {
-                record.host_id == Some(host_id) && record.provider == provider
-            }),
+            history
+                .iter()
+                .filter(|record| record.host_id == Some(host_id) && record.provider == provider),
             "host",
         );
         if host.is_some() {
@@ -303,7 +302,11 @@ mod tests {
         let mut accumulator = QualityAccumulator::new(9, placement(Some(3), "US", "CA"), at(0));
         for index in 0..MIN_SAMPLES {
             accumulator.add(QualitySample {
-                rtt_ms: if index == 0 { None } else { Some(20.0 + f64::from(index)) },
+                rtt_ms: if index == 0 {
+                    None
+                } else {
+                    Some(20.0 + f64::from(index))
+                },
                 rtt_variance_ms: Some(f64::NAN),
                 fps: 120.0,
                 missing_frames_percent: 1.0,

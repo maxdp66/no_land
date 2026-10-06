@@ -46,6 +46,7 @@ import {
   updateSshCredentials,
   updateVastApiKey,
   updateTensordockApiKey,
+  updateShadeformApiKey,
   getSharedStorageSettings,
   saveSharedStorageSettings,
   testSharedStorageConfig,
@@ -212,6 +213,7 @@ interface AppStore {
   loadRentedInstances: () => Promise<void>;
   saveVastApiKey: (apiKey: string) => Promise<void>;
   saveTensordockApiKey: (apiKey: string) => Promise<void>;
+  saveShadeformApiKey: (apiKey: string) => Promise<void>;
   refreshVastWalletSummary: () => Promise<VastWalletSummary | null>;
   savePlatformCredentials: (
     payload: PlatformCredentialsUpdate,
@@ -1137,7 +1139,8 @@ export const useAppStore = create<AppStore>((set, get) => {
         if (
           appState.onboardingCompleted &&
           (appState.credentials.vastApiKey.trim().length > 0 ||
-            (appState.credentials.tensordockApiKey ?? "").trim().length > 0)
+            (appState.credentials.tensordockApiKey ?? "").trim().length > 0 ||
+            (appState.credentials.shadeformApiKey ?? "").trim().length > 0)
         ) {
           const [instances, wallet] = await Promise.all([
             getRentedInstances(),
@@ -1522,6 +1525,22 @@ export const useAppStore = create<AppStore>((set, get) => {
       set({ busy: true, error: null });
       try {
         const appState = await updateTensordockApiKey(apiKey);
+        const rentedInstances = await getRentedInstances();
+        set({
+          appState,
+          rentedInstances: await enrichRentedInstancesWithEmbeddedStatus(rentedInstances),
+          busy: false,
+        });
+      } catch (error) {
+        set({ busy: false, error: mapError(error) });
+        throw error;
+      }
+    },
+
+    saveShadeformApiKey: async (apiKey) => {
+      set({ busy: true, error: null });
+      try {
+        const appState = await updateShadeformApiKey(apiKey);
         const rentedInstances = await getRentedInstances();
         set({
           appState,

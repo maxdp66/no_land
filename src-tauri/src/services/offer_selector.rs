@@ -312,7 +312,9 @@ fn format_location_label(offer: &VastOffer) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::quality::{QualityAccumulator, QualitySample, SessionPlacement, MIN_SAMPLES};
+    use crate::models::quality::{
+        QualityAccumulator, QualitySample, SessionPlacement, MIN_SAMPLES,
+    };
 
     fn offer(id: u64, host_id: u64, price: f64) -> VastOffer {
         let mut offer = VastOffer::from_value(&serde_json::json!({
@@ -366,15 +368,16 @@ mod tests {
             &location,
             &history,
         );
-        assert_eq!(ranked[0].id, 20, "cheaper host with bad history is pushed down");
+        assert_eq!(
+            ranked[0].id, 20,
+            "cheaper host with bad history is pushed down"
+        );
         assert_eq!(ranked[0].observed_quality.as_ref().unwrap().basis, "host");
         assert!(ranked[1].observed_quality.as_ref().unwrap().score < POOR_SCORE);
         assert_eq!(ranked[0].estimated_rtt_ms, Some(8.0));
 
-        let without_history = selector.rank_offers(
-            vec![offer(10, 1, 0.30), offer(20, 2, 0.50)],
-            &location,
-        );
+        let without_history =
+            selector.rank_offers(vec![offer(10, 1, 0.30), offer(20, 2, 0.50)], &location);
         assert_eq!(without_history[0].id, 10);
         assert!(without_history[0].observed_quality.is_none());
     }

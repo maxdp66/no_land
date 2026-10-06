@@ -11,6 +11,7 @@ import { InputField } from "../../components/ui/InputField";
 import { SharedStorageSettingsV2 } from "../shared-storage/SharedStorageSettingsV2";
 import { AutoShutdownSettings } from "./AutoShutdownSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { ShadeformKeySettings } from "./ShadeformKeySettings";
 import { TensorDockKeySettings } from "./TensorDockKeySettings";
 import { ControllerTester } from "../controllers/ControllerTester";
 import { BudgetSettings } from "../spend/BudgetSettings";
@@ -682,6 +683,10 @@ export function SettingsScreen({
       </div>
       <TensorDockKeySettings
         currentKey={appState.credentials.tensordockApiKey ?? ""}
+        busy={busy}
+      />
+      <ShadeformKeySettings
+        currentKey={appState.credentials.shadeformApiKey ?? ""}
         busy={busy}
       />
     </Card>

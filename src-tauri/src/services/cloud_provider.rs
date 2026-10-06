@@ -4,7 +4,7 @@
 //! (search, create, inspect, list, stop, destroy, SSH key sync) and routes
 //! each one to the provider that owns the offer or instance. Instances are
 //! addressed by local id (see `models::provider`); Vast ids pass straight
-//! through and TensorDock ids are resolved through the persisted
+//! through and TensorDock/Shadeform ids are resolved through the persisted
 //! `provider_instance_refs` table, which this client keeps up to date.
 
 use std::sync::Arc;
@@ -24,8 +24,9 @@ use crate::{
     },
     services::{
         app_context::AppContext,
+        shadeform_api::{ShadeformApiClient, ShadeformOfferRef, SHADEFORM_DEFAULT_SSH_USER},
         tensordock_api::{
-            TensorDockApiClient, TensorDockInstance, TensorDockOfferRef,
+            TensorDockApiClient, TensorDockOfferRef, TENSORDOCK_DEFAULT_SSH_USER,
             TENSORDOCK_MIN_STORAGE_GB,
         },
         vast_api::VastApiClient,
@@ -58,6 +59,7 @@ pub struct CloudClient {
     context: Option<AppContext>,
     vast: Option<VastApiClient>,
     tensordock: Option<TensorDockApiClient>,
+    shadeform: Option<ShadeformApiClient>,
     refs: Arc<RwLock<Vec<ProviderInstanceRef>>>,
 }
 
@@ -67,6 +69,7 @@ impl CloudClient {
         let state = context.state.read().await;
         let vast_key = state.credentials.vast_api_key.trim().to_string();
         let tensordock_key = state.credentials.tensordock_api_key.trim().to_string();
+        let shadeform_key = state.credentials.shadeform_api_key.trim().to_string();
         let refs = state.provider_instance_refs.clone();
         drop(state);
 
@@ -86,11 +89,18 @@ impl CloudClient {
                     tensordock_key,
                 )
             }),
+            shadeform: (!shadeform_key.is_empty()).then(|| {
+                ShadeformApiClient::new(
+                    context.http_client.clone(),
+                    context.config.shadeform_base_url.clone(),
+                    shadeform_key,
+                )
+            }),
             refs: Arc::new(RwLock::new(refs)),
         };
         if !client.has_any_provider() {
             return Err(AppError::InvalidInput(
-                "No GPU provider API key is configured. Add a Vast.ai or TensorDock key in Settings."
+                "No GPU provider API key is configured. Add a Vast.ai, TensorDock or Shadeform key in Settings."
                     .to_string(),
             ));
         }
@@ -103,12 +113,13 @@ impl CloudClient {
             context: None,
             vast: Some(vast),
             tensordock: None,
+            shadeform: None,
             refs: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
     pub fn has_any_provider(&self) -> bool {
-        self.vast.is_some() || self.tensordock.is_some()
+        self.vast.is_some() || self.tensordock.is_some() || self.shadeform.is_some()
     }
 
     pub fn has_vast(&self) -> bool {
@@ -127,35 +138,42 @@ impl CloudClient {
         })
     }
 
+    fn shadeform(&self) -> AppResult<&ShadeformApiClient> {
+        self.shadeform.as_ref().ok_or_else(|| {
+            AppError::InvalidInput("Missing Shadeform API key. Add it in Settings.".to_string())
+        })
+    }
+
     /// Provider that owns a local instance id.
     pub async fn provider_for_instance(&self, instance_id: u64) -> Option<CloudProviderKind> {
         let refs = self.refs.read().await;
         resolve_instance(&refs, instance_id).map(|resolved| resolved.provider)
     }
 
-    async fn tensordock_remote_id(&self, instance_id: u64) -> AppResult<String> {
+    /// Provider and provider-side id of a non-Vast instance.
+    async fn foreign_instance(&self, instance_id: u64) -> AppResult<(CloudProviderKind, String)> {
         let refs = self.refs.read().await;
         resolve_instance(&refs, instance_id)
-            .filter(|resolved| resolved.provider == CloudProviderKind::Tensordock)
-            .map(|resolved| resolved.remote_id)
+            .filter(|resolved| resolved.provider != CloudProviderKind::Vast)
+            .map(|resolved| (resolved.provider, resolved.remote_id))
             .ok_or_else(|| {
                 AppError::NotFound(format!(
-                    "Instance {instance_id} is not a known TensorDock instance"
+                    "Instance {instance_id} is not a known TensorDock or Shadeform instance"
                 ))
             })
     }
 
-    /// Remember TensorDock UUIDs so later calls by local id can resolve them.
-    async fn remember(&self, instances: &[TensorDockInstance]) {
+    /// Remember provider UUIDs so later calls by local id can resolve them.
+    async fn remember<'a>(
+        &self,
+        provider: CloudProviderKind,
+        remote_ids: impl IntoIterator<Item = &'a str>,
+    ) {
         let mut changed = false;
         {
             let mut refs = self.refs.write().await;
-            for instance in instances {
-                changed |= remember_instance_ref(
-                    &mut refs,
-                    CloudProviderKind::Tensordock,
-                    &instance.remote_id,
-                );
+            for remote_id in remote_ids {
+                changed |= remember_instance_ref(&mut refs, provider, remote_id);
             }
         }
         if !changed {
@@ -219,6 +237,22 @@ impl CloudClient {
                 }
             }
         }
+        if let Some(shadeform) = &self.shadeform {
+            match shadeform
+                .search_offers(search.storage_gb, search.geolocation_country_code)
+                .await
+            {
+                Ok(found) => offers.extend(
+                    found
+                        .into_iter()
+                        .filter(|offer| offer.reliability >= search.min_reliability.min(0.95)),
+                ),
+                Err(error) => {
+                    warn!("Shadeform offer search failed (continuing): {error}");
+                    errors.push(error);
+                }
+            }
+        }
         if offers.is_empty() {
             if let Some(error) = errors.into_iter().next() {
                 return Err(error);
@@ -260,7 +294,23 @@ impl CloudClient {
                         ssh_public_key,
                     )
                     .await?;
-                self.remember(std::slice::from_ref(&created)).await;
+                self.remember(CloudProviderKind::Tensordock, [created.remote_id.as_str()])
+                    .await;
+                Ok(created.instance)
+            }
+            Some(CloudProviderKind::Shadeform) => {
+                let offer_ref: ShadeformOfferRef =
+                    serde_json::from_str(&offer.provider_offer_ref).map_err(|error| {
+                        AppError::InvalidInput(format!(
+                            "Selected Shadeform offer is missing deployment details ({error}). Refresh offers and select it again."
+                        ))
+                    })?;
+                let created = self
+                    .shadeform()?
+                    .create_instance(&offer_ref, label, ssh_public_key)
+                    .await?;
+                self.remember(CloudProviderKind::Shadeform, [created.remote_id.as_str()])
+                    .await;
                 Ok(created.instance)
             }
             None => Err(AppError::InvalidInput(format!(
@@ -274,9 +324,33 @@ impl CloudClient {
         if !is_foreign_local_id(instance_id) {
             return self.vast()?.get_instance(instance_id).await;
         }
-        let remote_id = self.tensordock_remote_id(instance_id).await?;
-        let instance = self.tensordock()?.get_instance(&remote_id).await?;
-        Ok(instance.instance)
+        match self.foreign_instance(instance_id).await? {
+            (CloudProviderKind::Shadeform, remote_id) => {
+                Ok(self.shadeform()?.get_instance(&remote_id).await?.instance)
+            }
+            (_, remote_id) => Ok(self.tensordock()?.get_instance(&remote_id).await?.instance),
+        }
+    }
+
+    /// Login user to prepare root access with before the first root SSH
+    /// session, for providers whose images only authorize a default user.
+    pub async fn bootstrap_ssh_user(&self, instance_id: u64) -> AppResult<Option<String>> {
+        if !is_foreign_local_id(instance_id) {
+            return Ok(None);
+        }
+        match self.foreign_instance(instance_id).await? {
+            (CloudProviderKind::Shadeform, remote_id) => {
+                let user = match self.shadeform()?.get_instance(&remote_id).await {
+                    Ok(instance) => instance.ssh_user,
+                    Err(error) => {
+                        warn!("Could not read Shadeform login user (using default): {error}");
+                        SHADEFORM_DEFAULT_SSH_USER.to_string()
+                    }
+                };
+                Ok(Some(user))
+            }
+            _ => Ok(Some(TENSORDOCK_DEFAULT_SSH_USER.to_string())),
+        }
     }
 
     /// Instances across providers. Fails if any configured provider fails,
@@ -300,12 +374,31 @@ impl CloudClient {
         if let Some(tensordock) = &self.tensordock {
             match tensordock.list_instances().await {
                 Ok(instances) => {
-                    self.remember(&instances).await;
+                    self.remember(
+                        CloudProviderKind::Tensordock,
+                        instances.iter().map(|instance| instance.remote_id.as_str()),
+                    )
+                    .await;
                     listing
                         .instances
                         .extend(instances.into_iter().map(|instance| instance.instance));
                 }
                 Err(error) => listing.failed.push((CloudProviderKind::Tensordock, error)),
+            }
+        }
+        if let Some(shadeform) = &self.shadeform {
+            match shadeform.list_instances().await {
+                Ok(instances) => {
+                    self.remember(
+                        CloudProviderKind::Shadeform,
+                        instances.iter().map(|instance| instance.remote_id.as_str()),
+                    )
+                    .await;
+                    listing
+                        .instances
+                        .extend(instances.into_iter().map(|instance| instance.instance));
+                }
+                Err(error) => listing.failed.push((CloudProviderKind::Shadeform, error)),
             }
         }
         listing
@@ -315,18 +408,29 @@ impl CloudClient {
         if !is_foreign_local_id(instance_id) {
             return self.vast()?.pause_instance(instance_id).await;
         }
-        let remote_id = self.tensordock_remote_id(instance_id).await?;
-        let tensordock = self.tensordock()?;
-        tensordock.stop_instance(&remote_id).await?;
-        Ok(tensordock.get_instance(&remote_id).await?.instance)
+        match self.foreign_instance(instance_id).await? {
+            (CloudProviderKind::Shadeform, _) => Err(AppError::InvalidInput(
+                "Shadeform instances cannot be stopped, only destroyed. Destroy the server to stop billing."
+                    .to_string(),
+            )),
+            (_, remote_id) => {
+                let tensordock = self.tensordock()?;
+                tensordock.stop_instance(&remote_id).await?;
+                Ok(tensordock.get_instance(&remote_id).await?.instance)
+            }
+        }
     }
 
     pub async fn destroy_instance(&self, instance_id: u64) -> AppResult<()> {
         if !is_foreign_local_id(instance_id) {
             return self.vast()?.destroy_instance(instance_id).await;
         }
-        let remote_id = self.tensordock_remote_id(instance_id).await?;
-        self.tensordock()?.delete_instance(&remote_id).await
+        match self.foreign_instance(instance_id).await? {
+            (CloudProviderKind::Shadeform, remote_id) => {
+                self.shadeform()?.delete_instance(&remote_id).await
+            }
+            (_, remote_id) => self.tensordock()?.delete_instance(&remote_id).await,
+        }
     }
 
     pub async fn list_ssh_keys(&self) -> AppResult<Vec<VastSshKey>> {
@@ -347,7 +451,8 @@ impl CloudClient {
 
     pub async fn attach_ssh_key(&self, instance_id: u64, public_key: &str) -> AppResult<()> {
         if is_foreign_local_id(instance_id) {
-            // TensorDock installs the key at creation; there is no attach call.
+            // TensorDock and Shadeform install the key at creation; there is
+            // no attach call.
             return Ok(());
         }
         self.vast()?.attach_ssh_key(instance_id, public_key).await
@@ -369,6 +474,9 @@ mod tests {
         let foreign = crate::models::provider::foreign_local_id(CloudProviderKind::Tensordock, "x");
         let error = client.get_instance(foreign).await.unwrap_err();
         assert!(matches!(error, AppError::NotFound(_)), "{error}");
-        assert!(client.attach_ssh_key(foreign, "ssh-ed25519 AAAA").await.is_ok());
+        assert!(client
+            .attach_ssh_key(foreign, "ssh-ed25519 AAAA")
+            .await
+            .is_ok());
     }
 }

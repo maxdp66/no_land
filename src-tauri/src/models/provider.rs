@@ -3,7 +3,7 @@
 //! The app was built around Vast.ai, whose instance and offer ids are small
 //! integers, and those `u64` ids are used as keys throughout the persisted
 //! state, the commands and the frontend. Other providers use string ids
-//! (TensorDock uses UUIDs). Rather than re-keying everything, each foreign id
+//! (TensorDock and Shadeform use UUIDs). Rather than re-keying everything, each foreign id
 //! is mapped to a stable *local* id in a reserved range that Vast ids never
 //! reach, and the mapping is persisted so the provider's own id can be
 //! recovered for API calls.
@@ -22,6 +22,7 @@ pub enum CloudProviderKind {
     #[default]
     Vast,
     Tensordock,
+    Shadeform,
 }
 
 impl CloudProviderKind {
@@ -29,6 +30,7 @@ impl CloudProviderKind {
         match self {
             Self::Vast => "vast",
             Self::Tensordock => "tensordock",
+            Self::Shadeform => "shadeform",
         }
     }
 
@@ -36,6 +38,7 @@ impl CloudProviderKind {
         match self {
             Self::Vast => "Vast.ai",
             Self::Tensordock => "TensorDock",
+            Self::Shadeform => "Shadeform",
         }
     }
 
@@ -43,6 +46,7 @@ impl CloudProviderKind {
         match raw.trim().to_ascii_lowercase().as_str() {
             "" | "vast" | "vast.ai" | "vastai" => Some(Self::Vast),
             "tensordock" => Some(Self::Tensordock),
+            "shadeform" => Some(Self::Shadeform),
             _ => None,
         }
     }
@@ -155,9 +159,21 @@ mod tests {
     #[test]
     fn remembered_foreign_refs_resolve() {
         let mut refs = Vec::new();
-        assert!(remember_instance_ref(&mut refs, CloudProviderKind::Tensordock, "abc"));
-        assert!(!remember_instance_ref(&mut refs, CloudProviderKind::Tensordock, "abc"));
-        assert!(!remember_instance_ref(&mut refs, CloudProviderKind::Vast, "1"));
+        assert!(remember_instance_ref(
+            &mut refs,
+            CloudProviderKind::Tensordock,
+            "abc"
+        ));
+        assert!(!remember_instance_ref(
+            &mut refs,
+            CloudProviderKind::Tensordock,
+            "abc"
+        ));
+        assert!(!remember_instance_ref(
+            &mut refs,
+            CloudProviderKind::Vast,
+            "1"
+        ));
         let local = foreign_local_id(CloudProviderKind::Tensordock, "abc");
         let resolved = resolve_instance(&refs, local).unwrap();
         assert_eq!(resolved.provider, CloudProviderKind::Tensordock);

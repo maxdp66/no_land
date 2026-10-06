@@ -66,7 +66,11 @@ pub async fn set_price_alert_enabled(
 ) -> Result<PersistedAppState, FrontendError> {
     Ok(context
         .update_state(|state| {
-            if let Some(alert) = state.price_alerts.iter_mut().find(|alert| alert.id == alert_id) {
+            if let Some(alert) = state
+                .price_alerts
+                .iter_mut()
+                .find(|alert| alert.id == alert_id)
+            {
                 alert.enabled = enabled;
                 if enabled {
                     alert.last_notified_at = None;

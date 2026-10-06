@@ -191,6 +191,12 @@ fn get_tensordock_api_key(state: &PersistedAppState) -> &str {
 fn set_tensordock_api_key(state: &mut PersistedAppState, value: String) {
     state.credentials.tensordock_api_key = value;
 }
+fn get_shadeform_api_key(state: &PersistedAppState) -> &str {
+    &state.credentials.shadeform_api_key
+}
+fn set_shadeform_api_key(state: &mut PersistedAppState, value: String) {
+    state.credentials.shadeform_api_key = value;
+}
 fn get_twitch_client_secret(state: &PersistedAppState) -> &str {
     &state.credentials.twitch_client_secret
 }
@@ -236,6 +242,13 @@ const SECRET_FIELDS: &[SecretField] = &[
         nullable: false,
         get: get_tensordock_api_key,
         set: set_tensordock_api_key,
+    },
+    SecretField {
+        account: "credentials.shadeformApiKey",
+        json_path: &["credentials", "shadeformApiKey"],
+        nullable: false,
+        get: get_shadeform_api_key,
+        set: set_shadeform_api_key,
     },
     SecretField {
         account: "credentials.twitchClientSecret",

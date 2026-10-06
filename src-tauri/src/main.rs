@@ -631,6 +631,7 @@ fn main() {
             get_vast_wallet_summary,
             update_vast_api_key,
             update_tensordock_api_key,
+            update_shadeform_api_key,
             update_platform_credentials,
             get_cloudflare_turn_settings,
             save_cloudflare_turn_settings,

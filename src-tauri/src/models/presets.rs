@@ -141,6 +141,9 @@ mod tests {
             height: 1440,
         };
         settings.apply_to(&mut preferences);
-        assert_eq!(StreamPresetSettings::from_preferences(&preferences), settings);
+        assert_eq!(
+            StreamPresetSettings::from_preferences(&preferences),
+            settings
+        );
     }
 }

@@ -10,6 +10,7 @@ import type {
   ServerPreferences,
 } from "../../lib/types";
 import { APP_PROMPTS } from "../../prompts/appPrompts";
+import { providerDisplayName } from "../../lib/providers";
 
 interface Props {
   open: boolean;
@@ -695,7 +696,7 @@ export function ServerPickerModal({
 
                   <div className="mt-2 flex flex-wrap gap-1">
                     <span className="border border-[#c79bff]/50 bg-[#c79bff]/10 px-1.5 py-0.5 text-[10px] text-[#dcc2ff]">
-                      {offer.provider === "tensordock" ? "TensorDock" : "Vast.ai"}
+                      {providerDisplayName(offer.provider)}
                     </span>
                     {offer.isVerified && (
                       <span className="border border-neon-lime/50 bg-neon-lime/10 px-1.5 py-0.5 text-[10px] text-neon-lime">

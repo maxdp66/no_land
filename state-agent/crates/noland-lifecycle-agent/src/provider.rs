@@ -17,7 +17,8 @@ pub struct ProviderRequest {
     pub action: ProviderAction,
     pub api_key: String,
     pub kind: ProviderKind,
-    /// Provider-side id when it differs from `instance_id` (TensorDock).
+    /// Provider-side id when it differs from `instance_id` (TensorDock,
+    /// Shadeform).
     pub remote_instance_id: String,
 }
 
@@ -42,9 +43,27 @@ pub fn provider_call(request: &ProviderRequest) -> (&'static str, String, Option
         ),
         (ProviderKind::Tensordock, ProviderAction::Stop) => (
             "POST",
-            format!("{base}/api/v2/instances/{}/stop", request.remote_instance_id),
+            format!(
+                "{base}/api/v2/instances/{}/stop",
+                request.remote_instance_id
+            ),
             None,
         ),
+        // Shadeform cannot stop instances; capabilities with a stop action
+        // are rejected before a request is ever built.
+        (ProviderKind::Shadeform, _) => (
+            "POST",
+            format!("{base}/instances/{}/delete", request.remote_instance_id),
+            None,
+        ),
+    }
+}
+
+/// Authentication header line for a provider's API.
+pub fn auth_header(kind: ProviderKind, api_key: &str) -> String {
+    match kind {
+        ProviderKind::Shadeform => format!("X-API-KEY: {api_key}"),
+        ProviderKind::Vast | ProviderKind::Tensordock => format!("Authorization: Bearer {api_key}"),
     }
 }
 
@@ -75,10 +94,10 @@ impl ProviderLifecycle for VastLifecycleProvider {
         // Feed the bearer credential through curl's stdin config so it never
         // appears in process arguments or diagnostic output.
         let mut config = format!(
-            "url = \"{}\"\nrequest = \"{}\"\nheader = \"Authorization: Bearer {}\"\nconnect-timeout = 10\nmax-time = 30\nsilent\nshow-error\noutput = \"/dev/null\"\nwrite-out = \"%{{http_code}}\"\n",
+            "url = \"{}\"\nrequest = \"{}\"\nheader = \"{}\"\nconnect-timeout = 10\nmax-time = 30\nsilent\nshow-error\noutput = \"/dev/null\"\nwrite-out = \"%{{http_code}}\"\n",
             escape_curl_config(&endpoint),
             method,
-            escape_curl_config(&request.api_key),
+            escape_curl_config(&auth_header(request.kind, &request.api_key)),
         );
         if let Some(body) = body {
             config.push_str("header = \"Content-Type: application/json\"\n");
@@ -144,19 +163,28 @@ mod tests {
     #[test]
     fn provider_calls_target_each_providers_api() {
         let (method, url, body) = provider_call(&request(ProviderKind::Vast, ProviderAction::Stop));
-        assert_eq!((method, url.as_str()), ("PUT", "https://example.test/api/v0/instances/42/"));
+        assert_eq!(
+            (method, url.as_str()),
+            ("PUT", "https://example.test/api/v0/instances/42/")
+        );
         assert!(body.is_some());
 
         let (method, url, body) =
             provider_call(&request(ProviderKind::Vast, ProviderAction::Destroy));
-        assert_eq!((method, url.as_str()), ("DELETE", "https://example.test/api/v0/instances/42/"));
+        assert_eq!(
+            (method, url.as_str()),
+            ("DELETE", "https://example.test/api/v0/instances/42/")
+        );
         assert!(body.is_none());
 
         let (method, url, _) =
             provider_call(&request(ProviderKind::Tensordock, ProviderAction::Stop));
         assert_eq!(
             (method, url.as_str()),
-            ("POST", "https://example.test/api/v2/instances/6b7e-uuid/stop")
+            (
+                "POST",
+                "https://example.test/api/v2/instances/6b7e-uuid/stop"
+            )
         );
 
         let (method, url, _) =
@@ -165,6 +193,27 @@ mod tests {
             (method, url.as_str()),
             ("DELETE", "https://example.test/api/v2/instances/6b7e-uuid")
         );
+
+        let (method, url, body) =
+            provider_call(&request(ProviderKind::Shadeform, ProviderAction::Destroy));
+        assert_eq!(
+            (method, url.as_str()),
+            ("POST", "https://example.test/instances/6b7e-uuid/delete")
+        );
+        assert!(body.is_none());
+    }
+
+    #[test]
+    fn auth_headers_match_each_provider() {
+        assert_eq!(
+            auth_header(ProviderKind::Vast, "k"),
+            "Authorization: Bearer k"
+        );
+        assert_eq!(
+            auth_header(ProviderKind::Tensordock, "k"),
+            "Authorization: Bearer k"
+        );
+        assert_eq!(auth_header(ProviderKind::Shadeform, "k"), "X-API-KEY: k");
     }
 
     #[test]

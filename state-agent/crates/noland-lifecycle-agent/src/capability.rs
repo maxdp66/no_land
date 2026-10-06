@@ -86,11 +86,20 @@ impl StorageCapability {
                 "capability provider does not match configuration",
             ));
         }
-        if self.provider.kind == ProviderKind::Tensordock
-            && !is_safe_remote_instance_id(&self.provider.remote_instance_id)
+        if matches!(
+            self.provider.kind,
+            ProviderKind::Tensordock | ProviderKind::Shadeform
+        ) && !is_safe_remote_instance_id(&self.provider.remote_instance_id)
         {
             return Err(AgentError::new(
                 "capability remoteInstanceId is missing or invalid",
+            ));
+        }
+        if self.provider.kind == ProviderKind::Shadeform
+            && self.provider.action != ProviderAction::Destroy
+        {
+            return Err(AgentError::new(
+                "Shadeform instances can only be destroyed, not stopped",
             ));
         }
         if self.provider.action != config.provider_action {
@@ -211,5 +220,31 @@ mod tests {
         assert!(value.validate(&config, now).is_ok());
         value.provider.remote_instance_id = "../etc".into();
         assert!(value.validate(&config, now).is_err());
+    }
+
+    #[test]
+    fn shadeform_capability_requires_remote_id_and_destroy() {
+        let now = Utc.timestamp_opt(1_000, 0).unwrap();
+        let config = Config {
+            enabled: true,
+            instance_id: 42,
+            provider_kind: crate::config::ProviderKind::Shadeform,
+            ..Config::default()
+        };
+        let mut value = capability();
+        value.provider.kind = crate::config::ProviderKind::Shadeform;
+        assert!(value.validate(&config, now).is_err(), "remote id required");
+        value.provider.remote_instance_id = "d290f1ee-6c54".into();
+        assert!(value.validate(&config, now).is_ok());
+
+        let stop_config = Config {
+            provider_action: ProviderAction::Stop,
+            ..config
+        };
+        value.provider.action = ProviderAction::Stop;
+        assert!(
+            value.validate(&stop_config, now).is_err(),
+            "stop is unsupported"
+        );
     }
 }

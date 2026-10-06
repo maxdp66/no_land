@@ -21,6 +21,7 @@ pub enum ProviderKind {
     #[default]
     Vast,
     Tensordock,
+    Shadeform,
 }
 
 impl ProviderAction {

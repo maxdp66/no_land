@@ -255,9 +255,7 @@ impl SpendState {
                         last_observed_at: now,
                         running: observation.running,
                         hourly_price: finite_non_negative(observation.hourly_price),
-                        storage_hourly_price: finite_non_negative(
-                            observation.storage_hourly_price,
-                        ),
+                        storage_hourly_price: finite_non_negative(observation.storage_hourly_price),
                         session_started_at: observation.running.then_some(now),
                         session_usd: 0.0,
                     });
@@ -432,7 +430,9 @@ impl SpendState {
                     provider: cursor.provider.clone(),
                     instance_id: cursor.instance_id,
                     label: entry.map(|entry| entry.label.clone()).unwrap_or_default(),
-                    gpu_name: entry.map(|entry| entry.gpu_name.clone()).unwrap_or_default(),
+                    gpu_name: entry
+                        .map(|entry| entry.gpu_name.clone())
+                        .unwrap_or_default(),
                     running: cursor.running,
                     current_hourly_usd: if cursor.running {
                         cursor.hourly_price
@@ -546,8 +546,14 @@ mod tests {
     #[test]
     fn running_time_accrues_at_full_hourly_price() {
         let mut state = SpendState::default();
-        state.record_observations(&[observation(1, true, 0.60, 0.01)], at("2026-10-05T10:00:00Z"));
-        state.record_observations(&[observation(1, true, 0.60, 0.01)], at("2026-10-05T12:30:00Z"));
+        state.record_observations(
+            &[observation(1, true, 0.60, 0.01)],
+            at("2026-10-05T10:00:00Z"),
+        );
+        state.record_observations(
+            &[observation(1, true, 0.60, 0.01)],
+            at("2026-10-05T12:30:00Z"),
+        );
 
         assert!((state.month_total("2026-10") - 1.5).abs() < 1e-9);
         let summary = state.summary(at("2026-10-05T12:30:00Z"));
@@ -558,13 +564,22 @@ mod tests {
     #[test]
     fn interval_is_billed_at_the_previous_state_rate() {
         let mut state = SpendState::default();
-        state.record_observations(&[observation(1, false, 0.60, 0.02)], at("2026-10-05T10:00:00Z"));
+        state.record_observations(
+            &[observation(1, false, 0.60, 0.02)],
+            at("2026-10-05T10:00:00Z"),
+        );
         // Started at some point in the last hour; we only know it was
         // stopped at the previous observation.
-        state.record_observations(&[observation(1, true, 0.60, 0.02)], at("2026-10-05T11:00:00Z"));
+        state.record_observations(
+            &[observation(1, true, 0.60, 0.02)],
+            at("2026-10-05T11:00:00Z"),
+        );
         assert!((state.month_total("2026-10") - 0.02).abs() < 1e-9);
 
-        state.record_observations(&[observation(1, true, 0.60, 0.02)], at("2026-10-05T12:00:00Z"));
+        state.record_observations(
+            &[observation(1, true, 0.60, 0.02)],
+            at("2026-10-05T12:00:00Z"),
+        );
         assert!((state.month_total("2026-10") - 0.62).abs() < 1e-9);
         let entry = &state.ledger[0];
         assert!((entry.running_seconds - 3600.0).abs() < 1e-6);
@@ -574,8 +589,14 @@ mod tests {
     #[test]
     fn stopping_resets_the_session() {
         let mut state = SpendState::default();
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-05T10:00:00Z"));
-        state.record_observations(&[observation(1, false, 1.0, 0.0)], at("2026-10-05T11:00:00Z"));
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-05T10:00:00Z"),
+        );
+        state.record_observations(
+            &[observation(1, false, 1.0, 0.0)],
+            at("2026-10-05T11:00:00Z"),
+        );
         let cursor = &state.cursors[0];
         assert_eq!(cursor.session_started_at, None);
         assert_eq!(cursor.session_usd, 0.0);
@@ -585,8 +606,14 @@ mod tests {
     #[test]
     fn accrual_is_split_across_month_boundaries() {
         let mut state = SpendState::default();
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-09-30T23:00:00Z"));
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-01T02:00:00Z"));
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-09-30T23:00:00Z"),
+        );
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-01T02:00:00Z"),
+        );
 
         assert!((state.month_total("2026-09") - 1.0).abs() < 1e-9);
         assert!((state.month_total("2026-10") - 2.0).abs() < 1e-9);
@@ -595,8 +622,14 @@ mod tests {
     #[test]
     fn destroyed_instances_drop_their_cursor_but_keep_history() {
         let mut state = SpendState::default();
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-05T10:00:00Z"));
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-05T11:00:00Z"));
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-05T10:00:00Z"),
+        );
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-05T11:00:00Z"),
+        );
         state.record_observations(&[], at("2026-10-05T12:00:00Z"));
 
         assert!(state.cursors.is_empty());
@@ -607,20 +640,44 @@ mod tests {
     #[test]
     fn budget_levels_follow_warn_threshold() {
         let mut state = SpendState::default();
-        assert_eq!(state.budget_level(at("2026-10-05T10:00:00Z")), BudgetLevel::Disabled);
+        assert_eq!(
+            state.budget_level(at("2026-10-05T10:00:00Z")),
+            BudgetLevel::Disabled
+        );
 
         state.settings = BudgetSettings {
             monthly_budget_usd: 10.0,
             warn_at_percent: 80,
             auto_stop_at_budget: true,
         };
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-05T00:00:00Z"));
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-05T07:00:00Z"));
-        assert_eq!(state.budget_level(at("2026-10-05T07:00:00Z")), BudgetLevel::Ok);
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-05T08:30:00Z"));
-        assert_eq!(state.budget_level(at("2026-10-05T08:30:00Z")), BudgetLevel::Warning);
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-05T10:00:00Z"));
-        assert_eq!(state.budget_level(at("2026-10-05T10:00:00Z")), BudgetLevel::Exceeded);
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-05T00:00:00Z"),
+        );
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-05T07:00:00Z"),
+        );
+        assert_eq!(
+            state.budget_level(at("2026-10-05T07:00:00Z")),
+            BudgetLevel::Ok
+        );
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-05T08:30:00Z"),
+        );
+        assert_eq!(
+            state.budget_level(at("2026-10-05T08:30:00Z")),
+            BudgetLevel::Warning
+        );
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-05T10:00:00Z"),
+        );
+        assert_eq!(
+            state.budget_level(at("2026-10-05T10:00:00Z")),
+            BudgetLevel::Exceeded
+        );
     }
 
     #[test]
@@ -633,8 +690,14 @@ mod tests {
             },
             ..SpendState::default()
         };
-        state.record_observations(&[observation(7, true, 2.0, 0.0)], at("2026-10-05T10:00:00Z"));
-        state.record_observations(&[observation(7, true, 2.0, 0.0)], at("2026-10-05T11:00:00Z"));
+        state.record_observations(
+            &[observation(7, true, 2.0, 0.0)],
+            at("2026-10-05T10:00:00Z"),
+        );
+        state.record_observations(
+            &[observation(7, true, 2.0, 0.0)],
+            at("2026-10-05T11:00:00Z"),
+        );
 
         let now = at("2026-10-05T11:00:00Z");
         let targets = state.instances_to_auto_stop(now);
@@ -662,15 +725,26 @@ mod tests {
             },
             ..SpendState::default()
         };
-        state.record_observations(&[observation(7, true, 2.0, 0.0)], at("2026-10-05T10:00:00Z"));
-        state.record_observations(&[observation(7, true, 2.0, 0.0)], at("2026-10-05T11:00:00Z"));
-        assert!(state.instances_to_auto_stop(at("2026-10-05T11:00:00Z")).is_empty());
+        state.record_observations(
+            &[observation(7, true, 2.0, 0.0)],
+            at("2026-10-05T10:00:00Z"),
+        );
+        state.record_observations(
+            &[observation(7, true, 2.0, 0.0)],
+            at("2026-10-05T11:00:00Z"),
+        );
+        assert!(state
+            .instances_to_auto_stop(at("2026-10-05T11:00:00Z"))
+            .is_empty());
     }
 
     #[test]
     fn summary_projects_rest_of_month_at_current_burn() {
         let mut state = SpendState::default();
-        state.record_observations(&[observation(1, true, 1.0, 0.0)], at("2026-10-31T22:00:00Z"));
+        state.record_observations(
+            &[observation(1, true, 1.0, 0.0)],
+            at("2026-10-31T22:00:00Z"),
+        );
         let summary = state.summary(at("2026-10-31T22:00:00Z"));
         assert!((summary.projected_month_usd - 2.0).abs() < 1e-9);
     }

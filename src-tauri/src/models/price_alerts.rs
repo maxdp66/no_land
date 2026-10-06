@@ -46,7 +46,11 @@ pub struct PriceAlertMatch {
     pub hourly_price: f64,
 }
 
-pub fn validate_alert(gpu_query: &str, country_code: &str, max_hourly_usd: f64) -> Result<(), String> {
+pub fn validate_alert(
+    gpu_query: &str,
+    country_code: &str,
+    max_hourly_usd: f64,
+) -> Result<(), String> {
     if gpu_query.chars().count() > 40 {
         return Err("GPU filter is too long".to_string());
     }
@@ -153,21 +157,38 @@ mod tests {
         assert!(!offer_matches(&watch, &offer(1, "RTX 4090", "DE", 0.45)));
         assert!(!offer_matches(&watch, &offer(1, "RTX 4090", "US", 0.55)));
         assert!(!offer_matches(&watch, &offer(1, "RTX 3090", "US", 0.30)));
-        assert!(offer_matches(&alert("rtx4090", "", 0.5), &offer(1, "RTX 4090", "JP", 0.5)));
+        assert!(offer_matches(
+            &alert("rtx4090", "", 0.5),
+            &offer(1, "RTX 4090", "JP", 0.5)
+        ));
     }
 
     #[test]
     fn notifies_cheapest_once_then_on_cooldown_or_drop() {
         let mut alerts = vec![alert("4090", "", 0.6)];
-        let offers = vec![offer(1, "RTX 4090", "US", 0.55), offer(2, "RTX 4090", "CA", 0.41)];
+        let offers = vec![
+            offer(1, "RTX 4090", "US", 0.55),
+            offer(2, "RTX 4090", "CA", 0.41),
+        ];
         let first = evaluate_alerts(&mut alerts, &offers, at(1));
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].offer_id, 2);
 
-        assert!(evaluate_alerts(&mut alerts, &offers, at(2)).is_empty(), "within cooldown");
+        assert!(
+            evaluate_alerts(&mut alerts, &offers, at(2)).is_empty(),
+            "within cooldown"
+        );
         let cheaper = vec![offer(3, "RTX 4090", "US", 0.35)];
-        assert_eq!(evaluate_alerts(&mut alerts, &cheaper, at(3)).len(), 1, "price dropped");
-        assert_eq!(evaluate_alerts(&mut alerts, &cheaper, at(10)).len(), 1, "cooldown elapsed");
+        assert_eq!(
+            evaluate_alerts(&mut alerts, &cheaper, at(3)).len(),
+            1,
+            "price dropped"
+        );
+        assert_eq!(
+            evaluate_alerts(&mut alerts, &cheaper, at(10)).len(),
+            1,
+            "cooldown elapsed"
+        );
     }
 
     #[test]

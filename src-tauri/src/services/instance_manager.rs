@@ -107,9 +107,10 @@ impl InstanceManager {
 
             if instance.ssh_ready() && is_usable_ssh_host(&instance.ssh_host) {
                 // A new instance may reuse a destroyed one's host:port: drop stale SSH host key pins.
-                super::remote_exec::forget_host_keys(
+                super::remote_exec::bind_host_keys_to_instance(
                     &[&instance.ssh_host, &instance.public_ip],
                     instance.ssh_port,
+                    instance.id,
                 );
                 return Ok(instance);
             }

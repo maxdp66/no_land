@@ -35,3 +35,4 @@ export const PROVISIONING_ORDER = [
   "Ready",
 ] as const;
 export const TENSORDOCK_API_KEY_URL = "https://dashboard.tensordock.com/api";
+export const SHADEFORM_API_KEY_URL = "https://platform.shadeform.ai/settings/api";

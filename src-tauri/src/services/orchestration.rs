@@ -26,6 +26,7 @@ use crate::{
 use super::{
     app_context::{AppContext, OrchestrationStartRequest},
     audio_latency::AudioLatencyService,
+    cloud_provider::CloudClient,
     cloudflare_turn,
     connection_manager::{automatic_selection_enabled, ConnectionManager},
     health_check::run_system_health_report,
@@ -39,8 +40,7 @@ use super::{
     shared_storage::agent_runtime::ensure_state_agent,
     ssh_keys::SshKeyService,
     sunshine::SunshineService,
-    cloud_provider::CloudClient,
-    tensordock_api::{access_bootstrap_script, TENSORDOCK_DEFAULT_SSH_USER},
+    tensordock_api::access_bootstrap_script,
     wireguard::{WireGuardProvisionMode, WireGuardProvisionResult, WireGuardService},
 };
 
@@ -904,6 +904,11 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
     });
     let ssh_password = context.state.read().await.ssh.ssh_password.clone();
     let target_user = sanitize_ssh_user(&context.config.audio_target_user);
+    super::remote_exec::bind_host_keys_to_instance(
+        &[&instance.ssh_host, &instance.public_ip],
+        instance.ssh_port,
+        instance.id,
+    );
     let mut remote = RemoteExec {
         ssh_user,
         ssh_host: instance.public_ip.clone(),
@@ -1296,7 +1301,7 @@ async fn run_orchestration(app: AppHandle, context: AppContext) -> AppResult<()>
     let endpoint_port = instance.wireguard_port;
     if endpoint_host.trim().is_empty() || endpoint_port == 0 {
         return Err(AppError::Provisioning(format!(
-            "Instance {} does not expose a valid WireGuard endpoint on Vast (host='{}' port={}). Pick a VM-enabled offer with direct UDP ports.",
+            "Instance {} does not expose a reachable WireGuard UDP endpoint (host='{}' port={}). Pick a VM offer with a dedicated IP or forwarded UDP ports.",
             instance.id, endpoint_host, endpoint_port
         )));
     }
@@ -1905,6 +1910,11 @@ async fn run_existing_instance_orchestration(
     });
     let ssh_password = context.state.read().await.ssh.ssh_password.clone();
     let target_user = sanitize_ssh_user(&context.config.audio_target_user);
+    super::remote_exec::bind_host_keys_to_instance(
+        &[&instance.ssh_host, &instance.public_ip],
+        instance.ssh_port,
+        instance.id,
+    );
     let mut remote = RemoteExec {
         ssh_user,
         ssh_host: instance.public_ip.clone(),
@@ -2290,7 +2300,7 @@ async fn run_existing_instance_orchestration(
     let endpoint_port = instance.wireguard_port;
     if endpoint_host.trim().is_empty() || endpoint_port == 0 {
         return Err(AppError::Provisioning(format!(
-            "Instance {} does not expose a valid WireGuard endpoint on Vast (host='{}' port={}). Pick a VM-enabled offer with direct UDP ports.",
+            "Instance {} does not expose a reachable WireGuard UDP endpoint (host='{}' port={}). Pick a VM offer with a dedicated IP or forwarded UDP ports.",
             instance.id, endpoint_host, endpoint_port
         )));
     }
@@ -2637,25 +2647,30 @@ async fn run_existing_instance_orchestration(
     Ok(())
 }
 
-/// TensorDock images only authorize the deploy key for their default user.
-/// Log in as that user once and give the managed key root access (and set the
-/// desktop user's password), which Vast's template does at boot. Idempotent.
-async fn bootstrap_tensordock_access(
+/// TensorDock and Shadeform images only authorize the deploy key for their
+/// default user. Log in as that user once and give the managed key root access
+/// (and set the desktop user's password), which Vast's template does at boot.
+/// Idempotent.
+async fn bootstrap_vm_access(
     app: &AppHandle,
     context: &AppContext,
     remote: &RemoteExec,
+    provider: CloudProviderKind,
+    login_user: &str,
 ) -> AppResult<()> {
+    let provider_name = provider.display_name();
     let password = context.state.read().await.credentials.app_password.clone();
     let target_user = sanitize_ssh_user(&context.config.audio_target_user);
     let script = access_bootstrap_script(&target_user, &password);
     let mut bootstrap = remote.clone();
-    bootstrap.ssh_user = TENSORDOCK_DEFAULT_SSH_USER.to_string();
+    // The script also creates the desktop user, so it runs even as root.
+    bootstrap.ssh_user = sanitize_ssh_user(login_user);
 
     emit_transition(
         app,
         context,
         OrchestrationState::ConnectingSsh,
-        "Preparing TensorDock VM access",
+        &format!("Preparing {provider_name} VM access"),
         Some(format!(
             "{}@{}:{}",
             bootstrap.ssh_user, bootstrap.ssh_host, bootstrap.ssh_port
@@ -2673,16 +2688,18 @@ async fn bootstrap_tensordock_access(
             tokio::task::spawn_blocking(move || bootstrap.ssh(&script, Duration::from_secs(60)))
                 .await
                 .map_err(|error| {
-                    AppError::Command(format!("TensorDock access bootstrap join failure: {error}"))
+                    AppError::Command(format!(
+                        "{provider_name} access bootstrap join failure: {error}"
+                    ))
                 })??
         };
         if output.status_code == 0 && output.stdout.contains("NOLAND_ACCESS_READY") {
-            info!("TensorDock access bootstrap completed on attempt {attempt}");
+            info!("{provider_name} access bootstrap completed on attempt {attempt}");
             return Ok(());
         }
         last_stderr = output.stderr.trim().to_string();
         warn!(
-            "TensorDock access bootstrap attempt {attempt}/{} failed (status {}): {}",
+            "{provider_name} access bootstrap attempt {attempt}/{} failed (status {}): {}",
             context.config.ssh_connect_probe_attempts, output.status_code, last_stderr
         );
         if attempt < context.config.ssh_connect_probe_attempts {
@@ -2691,8 +2708,8 @@ async fn bootstrap_tensordock_access(
     }
 
     Err(AppError::Provisioning(format!(
-        "Could not prepare root access on the TensorDock VM as '{}'. Last error: {last_stderr}",
-        TENSORDOCK_DEFAULT_SSH_USER
+        "Could not prepare root access on the {provider_name} VM as '{}'. Last error: {last_stderr}",
+        bootstrap.ssh_user
     )))
 }
 
@@ -2721,8 +2738,12 @@ async fn wait_for_ssh_acceptance(
         .load_key_into_agent(Path::new(&remote.private_key_path), &passphrase)
         .await?;
 
-    if vast.provider_for_instance(instance_id).await == Some(CloudProviderKind::Tensordock) {
-        bootstrap_tensordock_access(app, context, remote).await?;
+    if let Some(login_user) = vast.bootstrap_ssh_user(instance_id).await? {
+        let provider = vast
+            .provider_for_instance(instance_id)
+            .await
+            .unwrap_or(CloudProviderKind::Tensordock);
+        bootstrap_vm_access(app, context, remote, provider, &login_user).await?;
     }
 
     let mut resynced_after_auth_failure = false;

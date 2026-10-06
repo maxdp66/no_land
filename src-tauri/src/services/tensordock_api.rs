@@ -36,6 +36,10 @@ const TENSORDOCK_IMAGE: &str = "ubuntu2404";
 pub const TENSORDOCK_MIN_STORAGE_GB: u32 = 100;
 const DEFAULT_VCPUS: u32 = 8;
 const DEFAULT_RAM_GB: u32 = 32;
+/// Ports forwarded when a location has no dedicated IP: SSH, WireGuard (all
+/// streaming runs through the tunnel) and the network probe. An external
+/// port of 0 lets TensorDock pick one.
+const FORWARDED_PORTS: [u16; 3] = [22, 51820, 6201];
 
 /// Everything needed to deploy one offer, serialized into
 /// `VastOffer::provider_offer_ref`.
@@ -46,6 +50,13 @@ pub struct TensorDockOfferRef {
     pub gpu_v0_name: String,
     pub vcpu_count: u32,
     pub ram_gb: u32,
+    /// `false` deploys with port forwards instead of a dedicated IP.
+    #[serde(default = "default_true")]
+    pub use_dedicated_ip: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A TensorDock instance plus its provider-side UUID.
@@ -96,7 +107,9 @@ impl TensorDockApiClient {
             .map_err(|error| AppError::Api(format!("TensorDock {method} {url} failed: {error}")))?;
         let status = response.status();
         let text = response.text().await.map_err(|error| {
-            AppError::Api(format!("TensorDock {method} {url} response read failed: {error}"))
+            AppError::Api(format!(
+                "TensorDock {method} {url} response read failed: {error}"
+            ))
         })?;
         let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text));
         info!(
@@ -191,15 +204,38 @@ impl TensorDockApiClient {
             .await?;
         let items = body
             .pointer("/data/instances")
+            // The getting-started page shows this JSON:API list envelope.
+            .or_else(|| body.pointer("/data/attributes/instances"))
             .or_else(|| body.get("instances"))
             .or_else(|| body.get("data"))
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Ok(items
+        let listed = items
             .iter()
             .filter_map(|item| parse_instance(item, None))
-            .collect())
+            .collect::<Vec<_>>();
+
+        // The list only carries id, name and status. Fetch details (IP,
+        // ports, GPU, rate) so refreshes do not blank saved SSH endpoints.
+        let mut instances = Vec::with_capacity(listed.len());
+        for instance in listed {
+            if !needs_details(&instance) {
+                instances.push(instance);
+                continue;
+            }
+            match self.get_instance(&instance.remote_id).await {
+                Ok(detailed) => instances.push(detailed),
+                Err(error) => {
+                    warn!(
+                        "TensorDock instance {} details failed (using list entry): {error}",
+                        instance.remote_id
+                    );
+                    instances.push(instance);
+                }
+            }
+        }
+        Ok(instances)
     }
 
     pub async fn stop_instance(&self, remote_id: &str) -> AppResult<()> {
@@ -230,6 +266,13 @@ impl TensorDockApiClient {
     }
 }
 
+/// Whether a listed instance lacks the network details the app relies on.
+/// Deleted instances are skipped since they have none to fetch.
+fn needs_details(instance: &TensorDockInstance) -> bool {
+    instance.instance.public_ip.trim().is_empty()
+        && !matches!(instance.instance.status.as_str(), "destroying" | "deleted")
+}
+
 /// Request body for `POST /api/v2/instances`.
 pub fn create_instance_payload(
     offer_ref: &TensorDockOfferRef,
@@ -237,7 +280,7 @@ pub fn create_instance_payload(
     label: &str,
     ssh_public_key: &str,
 ) -> Value {
-    json!({
+    let mut payload = json!({
         "data": {
             "type": "virtualmachine",
             "attributes": {
@@ -251,13 +294,23 @@ pub fn create_instance_payload(
                     "gpus": { offer_ref.gpu_v0_name.clone(): { "count": 1 } }
                 },
                 "location_id": offer_ref.location_id,
-                // A dedicated IP exposes every port, including the UDP ports
-                // WireGuard and GameStream need.
-                "useDedicatedIp": true,
                 "ssh_key": ssh_public_key.trim()
             }
         }
-    })
+    });
+    let attributes = &mut payload["data"]["attributes"];
+    if offer_ref.use_dedicated_ip {
+        // A dedicated IP exposes every port, including WireGuard's UDP port.
+        attributes["useDedicatedIp"] = Value::Bool(true);
+    } else {
+        attributes["port_forwards"] = Value::Array(
+            FORWARDED_PORTS
+                .iter()
+                .map(|port| json!({ "internal_port": port, "external_port": 0 }))
+                .collect(),
+        );
+    }
+    payload
 }
 
 /// Shell script run once over SSH as the image's default user, giving the
@@ -269,10 +322,12 @@ pub fn access_bootstrap_script(target_user: &str, target_password: &str) -> Stri
     format!(
         r#"set -eu
 sudo -n true
-sudo install -d -m 700 /root/.ssh
-cat ~/.ssh/authorized_keys | sudo tee -a /root/.ssh/authorized_keys >/dev/null
-sudo sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys
-sudo chmod 600 /root/.ssh/authorized_keys
+if [ "$(id -u)" -ne 0 ]; then
+  sudo install -d -m 700 /root/.ssh
+  cat ~/.ssh/authorized_keys | sudo tee -a /root/.ssh/authorized_keys >/dev/null
+  sudo sort -u -o /root/.ssh/authorized_keys /root/.ssh/authorized_keys
+  sudo chmod 600 /root/.ssh/authorized_keys
+fi
 if ! id -u {user} >/dev/null 2>&1; then sudo useradd -m -s /bin/bash -G sudo {user}; fi
 echo {credentials} | sudo chpasswd
 sudo install -d -m 755 /etc/ssh/sshd_config.d
@@ -350,8 +405,8 @@ fn country_matches(country: &str, code: &str) -> bool {
     country.eq_ignore_ascii_case(code) || country_code_for(country).eq_ignore_ascii_case(code)
 }
 
-/// ISO 3166 alpha-2 code for the country names TensorDock commonly reports.
-fn country_code_for(country: &str) -> &'static str {
+/// ISO 3166 alpha-2 code for the country names GPU providers commonly report.
+pub(crate) fn country_code_for(country: &str) -> &'static str {
     match country.trim().to_ascii_lowercase().as_str() {
         "united states" | "united states of america" | "usa" | "us" => "US",
         "canada" | "ca" => "CA",
@@ -371,6 +426,44 @@ fn country_code_for(country: &str) -> &'static str {
         "australia" | "au" => "AU",
         "india" | "in" => "IN",
         "brazil" | "br" => "BR",
+        "ireland" | "ie" => "IE",
+        "switzerland" | "ch" => "CH",
+        "belgium" | "be" => "BE",
+        "austria" | "at" => "AT",
+        "denmark" | "dk" => "DK",
+        "portugal" | "pt" => "PT",
+        "iceland" | "is" => "IS",
+        "estonia" | "ee" => "EE",
+        "latvia" | "lv" => "LV",
+        "lithuania" | "lt" => "LT",
+        "romania" | "ro" => "RO",
+        "bulgaria" | "bg" => "BG",
+        "hungary" | "hu" => "HU",
+        "slovakia" | "sk" => "SK",
+        "slovenia" | "si" => "SI",
+        "croatia" | "hr" => "HR",
+        "serbia" | "rs" => "RS",
+        "greece" | "gr" => "GR",
+        "luxembourg" | "lu" => "LU",
+        "ukraine" | "ua" => "UA",
+        "moldova" | "md" => "MD",
+        "turkey" | "türkiye" | "turkiye" | "tr" => "TR",
+        "israel" | "il" => "IL",
+        "united arab emirates" | "uae" | "ae" => "AE",
+        "south africa" | "za" => "ZA",
+        "mexico" | "mx" => "MX",
+        "chile" | "cl" => "CL",
+        "argentina" | "ar" => "AR",
+        "colombia" | "co" => "CO",
+        "south korea" | "korea" | "republic of korea" | "kr" => "KR",
+        "taiwan" | "tw" => "TW",
+        "hong kong" | "hk" => "HK",
+        "thailand" | "th" => "TH",
+        "malaysia" | "my" => "MY",
+        "indonesia" | "id" => "ID",
+        "vietnam" | "viet nam" | "vn" => "VN",
+        "philippines" | "ph" => "PH",
+        "new zealand" | "nz" => "NZ",
         _ => "",
     }
 }
@@ -385,9 +478,18 @@ fn gpu_entries(raw: Option<&Value>) -> Vec<(String, Value)> {
                 (!name.is_empty()).then(|| (name, item.clone()))
             })
             .collect(),
+        // Keys are the model; instance details also carry `v0Name` inside.
         Some(Value::Object(map)) => map
             .iter()
-            .map(|(name, item)| (name.clone(), item.clone()))
+            .map(|(name, item)| {
+                let inner = string_any(item, &["v0Name", "v0_name", "gpuV0Name"]);
+                let name = if inner.is_empty() {
+                    name.clone()
+                } else {
+                    inner
+                };
+                (name, item.clone())
+            })
             .collect(),
         _ => Vec::new(),
     }
@@ -439,6 +541,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
         .unwrap_or_default();
 
     let mut offers = Vec::new();
+    let mut skipped = SkipCounts::default();
     for location in &locations {
         let location_id = get_any(location, &["id", "uuid", "location_id"])
             .and_then(value_as_string)
@@ -448,13 +551,32 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
         }
         let city = string_any(location, &["city"]);
         let region = string_any(location, &["stateprovince", "state", "region"]);
-        let country = string_any(location, &["country"]);
+        let country_name = string_any(location, &["country"]);
+        // The server picker groups offers by ISO code, like Vast reports them.
+        let country = match country_code_for(&country_name) {
+            "" => country_name.clone(),
+            code => code.to_string(),
+        };
         let tier = number_any(location, &["tier"]).unwrap_or_default();
 
         for (gpu_v0_name, gpu) in gpu_entries(location.get("gpus")) {
-            let available = number_any(&gpu, &["max_count", "maxCount", "available", "count"])
-                .unwrap_or(1.0);
-            if available < 1.0 {
+            skipped.gpus_seen += 1;
+            let sold_out = bool_any(&gpu, &["available", "isAvailable", "is_available"])
+                == Some(false)
+                || number_any(
+                    &gpu,
+                    &[
+                        "max_count",
+                        "maxCount",
+                        "available_count",
+                        "availableCount",
+                        "available",
+                        "count",
+                    ],
+                )
+                .is_some_and(|count| count < 1.0);
+            if sold_out {
+                skipped.sold_out += 1;
                 continue;
             }
             let network = gpu
@@ -462,10 +584,17 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                 .or_else(|| gpu.get("networkFeatures"))
                 .cloned()
                 .unwrap_or(Value::Null);
-            if bool_any(&network, &["dedicated_ip_available", "dedicatedIpAvailable"]) == Some(false)
-            {
-                // Without a dedicated IP, inbound UDP for streaming is not
-                // guaranteed, so these offers are not usable.
+            let dedicated_ip = bool_any(
+                &network,
+                &["dedicated_ip_available", "dedicatedIpAvailable"],
+            ) != Some(false);
+            let port_forwarding = bool_any(
+                &network,
+                &["port_forwarding_available", "portForwardingAvailable"],
+            ) == Some(true);
+            if !dedicated_ip && !port_forwarding {
+                // No way to reach WireGuard's UDP port from outside.
+                skipped.no_dedicated_ip += 1;
                 continue;
             }
             let resources = gpu.get("resources").cloned().unwrap_or(Value::Null);
@@ -475,19 +604,39 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
             let max_storage =
                 number_any(&resources, &["max_storage_gb", "maxStorageGb"]).unwrap_or(f64::MAX);
             if max_storage < f64::from(storage_gb) {
+                skipped.storage += 1;
                 continue;
             }
             let vcpu_count = (f64::from(DEFAULT_VCPUS).min(max_vcpus).floor() as u32).max(2);
             let ram_gb = (f64::from(DEFAULT_RAM_GB).min(max_ram).floor() as u32).max(8);
 
-            let gpu_hourly = number_any(&gpu, &["price_per_hr", "pricePerHr", "price"]).unwrap_or(0.0);
+            let gpu_hourly = number_any(
+                &gpu,
+                &[
+                    "price_per_hr",
+                    "pricePerHr",
+                    "price_per_hour",
+                    "pricePerHour",
+                    "hourly_price",
+                    "price",
+                ],
+            )
+            .or_else(|| {
+                number_any(
+                    &pricing,
+                    &["per_gpu_hr", "perGpuHr", "price_per_hr", "pricePerHr"],
+                )
+            })
+            .unwrap_or(0.0);
             let per_vcpu = number_any(&pricing, &["per_vcpu_hr", "perVcpuHr"]).unwrap_or(0.0);
             let per_ram = number_any(&pricing, &["per_gb_ram_hr", "perGbRamHr"]).unwrap_or(0.0);
             let per_storage =
                 number_any(&pricing, &["per_gb_storage_hr", "perGbStorageHr"]).unwrap_or(0.0);
-            let compute = gpu_hourly + per_vcpu * f64::from(vcpu_count) + per_ram * f64::from(ram_gb);
+            let compute =
+                gpu_hourly + per_vcpu * f64::from(vcpu_count) + per_ram * f64::from(ram_gb);
             let storage = per_storage * f64::from(storage_gb);
             if compute <= 0.0 {
+                skipped.no_price += 1;
                 continue;
             }
 
@@ -496,6 +645,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                 gpu_v0_name: gpu_v0_name.clone(),
                 vcpu_count,
                 ram_gb,
+                use_dedicated_ip: dedicated_ip,
             };
             let display_name = string_any(&gpu, &["displayName", "display_name"]);
             let gpu_name = if display_name.is_empty() {
@@ -506,7 +656,7 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                     .trim_start_matches("GeForce ")
                     .to_string()
             };
-            let host_label = [city.as_str(), region.as_str(), country.as_str()]
+            let host_label = [city.as_str(), region.as_str(), country_name.as_str()]
                 .iter()
                 .filter(|part| !part.is_empty())
                 .copied()
@@ -519,7 +669,13 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                     &format!("{location_id}/{gpu_v0_name}"),
                 ),
                 host_id: None,
-                host_label: format!("TensorDock {host_label}").trim().to_string(),
+                host_label: if dedicated_ip {
+                    format!("TensorDock {host_label}").trim().to_string()
+                } else {
+                    format!("TensorDock {host_label} (port-forwarded)")
+                        .trim()
+                        .to_string()
+                },
                 city: city.clone(),
                 region: region.clone(),
                 country: country.clone(),
@@ -542,7 +698,9 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                 hourly_price: compute + storage,
                 compute_hourly_price: compute,
                 storage_hourly_price: storage,
-                available_storage_gb: if max_storage.is_finite() && max_storage < f64::from(u32::MAX) {
+                available_storage_gb: if max_storage.is_finite()
+                    && max_storage < f64::from(u32::MAX)
+                {
                     max_storage as u32
                 } else {
                     storage_gb
@@ -552,14 +710,66 @@ pub fn parse_locations(body: &Value, storage_gb: u32) -> Vec<VastOffer> {
                 is_verified: true,
                 is_datacenter: tier >= 3.0,
                 offer_type: "on-demand".to_string(),
-                has_static_ip: true,
+                has_static_ip: dedicated_ip,
                 has_avx: true,
                 provider: CloudProviderKind::Tensordock.as_str().to_string(),
                 provider_offer_ref: serde_json::to_string(&offer_ref).unwrap_or_default(),
             });
         }
     }
+    let message = format!(
+        "TensorDock locations: {} location(s), {} GPU type(s), {} offer(s); skipped {} sold out, {} without a dedicated IP or port forwarding, {} below {storage_gb} GB storage, {} without a price",
+        locations.len(),
+        skipped.gpus_seen,
+        offers.len(),
+        skipped.sold_out,
+        skipped.no_dedicated_ip,
+        skipped.storage,
+        skipped.no_price,
+    );
+    if offers.is_empty() {
+        // Log the response shape (keys only, never values) so a mismatch with
+        // the live API is visible in diagnostics.
+        warn!("{message}; response shape: {}", json_shape(body, 3));
+    } else {
+        info!("{message}");
+    }
     offers
+}
+
+#[derive(Default)]
+struct SkipCounts {
+    gpus_seen: usize,
+    sold_out: usize,
+    no_dedicated_ip: usize,
+    storage: usize,
+    no_price: usize,
+}
+
+/// Keys and value types of a JSON document down to `depth`, with arrays
+/// summarized by their first element. Contains no values.
+pub(crate) fn json_shape(value: &Value, depth: usize) -> String {
+    match value {
+        Value::Object(map) if depth > 0 => format!(
+            "{{{}}}",
+            map.iter()
+                .take(24)
+                .map(|(key, item)| format!("{key}: {}", json_shape(item, depth - 1)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(_) => "{..}".to_string(),
+        Value::Array(items) => match items.first() {
+            Some(first) if depth > 0 => {
+                format!("[{} x {}]", items.len(), json_shape(first, depth - 1))
+            }
+            _ => format!("[{}]", items.len()),
+        },
+        Value::String(_) => "string".to_string(),
+        Value::Number(_) => "number".to_string(),
+        Value::Bool(_) => "bool".to_string(),
+        Value::Null => "null".to_string(),
+    }
 }
 
 fn normalize_status(raw: &str) -> String {
@@ -592,8 +802,14 @@ fn port_forwards(attributes: &Value) -> Vec<(u16, u16, Option<String>)> {
     match raw {
         Some(Value::Array(items)) => {
             for item in items {
-                let internal = parse_port(get_any(item, &["internal_port", "internalPort", "internal"]));
-                let external = parse_port(get_any(item, &["external_port", "externalPort", "external"]));
+                let internal = parse_port(get_any(
+                    item,
+                    &["internal_port", "internalPort", "internal"],
+                ));
+                let external = parse_port(get_any(
+                    item,
+                    &["external_port", "externalPort", "external"],
+                ));
                 let protocol = item
                     .get("protocol")
                     .and_then(Value::as_str)
@@ -618,7 +834,11 @@ fn port_forwards(attributes: &Value) -> Vec<(u16, u16, Option<String>)> {
     out
 }
 
-fn forwarded_port(forwards: &[(u16, u16, Option<String>)], internal: u16, protocol: &str) -> Option<u16> {
+fn forwarded_port(
+    forwards: &[(u16, u16, Option<String>)],
+    internal: u16,
+    protocol: &str,
+) -> Option<u16> {
     forwards
         .iter()
         .find(|(port, _, proto)| {
@@ -640,11 +860,17 @@ pub fn parse_instance(value: &Value, fallback_id: Option<&str>) -> Option<Tensor
 
     let ip = string_any(attributes, &["ipAddress", "ip_address", "ip", "public_ip"]);
     let forwards = port_forwards(attributes);
-    let dedicated_ip = bool_any(attributes, &["useDedicatedIp", "dedicated_ip", "dedicatedIp"])
-        .unwrap_or(forwards.is_empty());
+    let dedicated_ip = bool_any(
+        attributes,
+        &["useDedicatedIp", "dedicated_ip", "dedicatedIp"],
+    )
+    .unwrap_or(forwards.is_empty());
     let mapped = |internal: u16, protocol: &str| -> u16 {
-        forwarded_port(&forwards, internal, protocol)
-            .unwrap_or(if dedicated_ip { internal } else { 0 })
+        forwarded_port(&forwards, internal, protocol).unwrap_or(if dedicated_ip {
+            internal
+        } else {
+            0
+        })
     };
     let ssh_port = mapped(22, "tcp").max(if ip.is_empty() { 0 } else { 22 });
     let wireguard_listen_port = 51820;
@@ -659,8 +885,11 @@ pub fn parse_instance(value: &Value, fallback_id: Option<&str>) -> Option<Tensor
         .unwrap_or_else(|| "Unknown GPU".to_string());
 
     let status = normalize_status(&string_any(attributes, &["status", "state"]));
-    let hourly = number_any(attributes, &["rateHourly", "rate_hourly", "hourly_rate", "price"])
-        .unwrap_or_default();
+    let hourly = number_any(
+        attributes,
+        &["rateHourly", "rate_hourly", "hourly_rate", "price"],
+    )
+    .unwrap_or_default();
     let label = string_any(attributes, &["name", "label"]);
 
     let local_id = foreign_local_id(CloudProviderKind::Tensordock, &remote_id);
@@ -753,13 +982,22 @@ mod tests {
     #[test]
     fn parses_location_offers_and_skips_unusable_gpus() {
         let offers = parse_locations(&locations_body(), 100);
-        assert_eq!(offers.len(), 2, "no-dedicated-IP and sold-out GPUs are skipped");
+        assert_eq!(
+            offers.len(),
+            2,
+            "no-dedicated-IP and sold-out GPUs are skipped"
+        );
 
         let rtx = &offers[0];
         assert_eq!(rtx.provider, "tensordock");
         assert_eq!(rtx.gpu_name, "RTX 4090 PCIe 24GB");
         assert_eq!(rtx.gpu_ram_mb, 24 * 1024);
-        assert_eq!(rtx.country, "United States");
+        assert_eq!(rtx.country, "US");
+        assert!(
+            rtx.host_label.ends_with("United States"),
+            "{}",
+            rtx.host_label
+        );
         assert!(rtx.is_datacenter);
         let expected_compute = 0.35 + 0.003 * 8.0 + 0.002 * 32.0;
         assert!((rtx.compute_hourly_price - expected_compute).abs() < 1e-9);
@@ -786,6 +1024,31 @@ mod tests {
         }]}});
         assert_eq!(parse_locations(&body, 100).len(), 1);
         assert!(parse_locations(&body, 200).is_empty());
+    }
+
+    #[test]
+    fn availability_flags_and_alternate_price_keys_are_understood() {
+        let body = json!({"data": {"locations": [{
+            "id": "loc", "country": "Norway",
+            "gpus": [
+                {"v0Name": "rtxa5000-pcie-24gb", "available": true, "pricePerHour": 0.3},
+                {"v0Name": "rtxa4000-pcie-16gb", "available": false, "price_per_hr": 0.2},
+                {"v0Name": "l40s-pcie-48gb", "available_count": 0, "price_per_hr": 0.9}
+            ]
+        }]}});
+        let offers = parse_locations(&body, 100);
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].country, "NO");
+        assert!((offers[0].compute_hourly_price - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn json_shape_reports_keys_without_values() {
+        let shape = json_shape(
+            &json!({"data": {"locations": [{"id": "secret-ish", "n": 1}]}}),
+            4,
+        );
+        assert_eq!(shape, "{data: {locations: [1 x {id: string, n: number}]}}");
     }
 
     #[test]
@@ -828,6 +1091,95 @@ mod tests {
     }
 
     #[test]
+    fn parses_flat_instance_from_official_docs() {
+        // Shape of GET /api/v2/instances/{id} in TensorDock's API docs.
+        let body = json!({
+            "type": "instance",
+            "id": "inst-1",
+            "name": "noland",
+            "status": "running",
+            "ipAddress": "203.0.113.50",
+            "portForwards": [],
+            "resources": {
+                "vcpu_count": 8, "ram_gb": 32, "storage_gb": 100,
+                "gpus": { "RTX 4090": { "count": 1, "v0Name": "geforcertx4090-pcie-24gb" } }
+            },
+            "rateHourly": 0.62
+        });
+        let envelope = body.get("data").unwrap_or(&body);
+        let parsed = parse_instance(envelope, Some("inst-1")).unwrap();
+        assert_eq!(parsed.remote_id, "inst-1");
+        assert_eq!(parsed.instance.public_ip, "203.0.113.50");
+        assert_eq!(parsed.instance.ssh_port, 22);
+        assert_eq!(parsed.instance.wireguard_port, 51820);
+        assert_eq!(parsed.instance.gpu_name, "RTX 4090");
+    }
+
+    #[test]
+    fn listed_instances_without_an_ip_need_details() {
+        // Item shape of GET /api/v2/instances in TensorDock's API docs.
+        let listed = parse_instance(
+            &json!({
+                "type": "VM",
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "attributes": { "name": "My Instance", "status": "running" }
+            }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(listed.remote_id, "550e8400-e29b-41d4-a716-446655440000");
+        assert!(listed.instance.public_ip.is_empty());
+        assert!(needs_details(&listed));
+
+        let detailed = parse_instance(
+            &json!({"id": "a", "status": "running", "ipAddress": "203.0.113.9"}),
+            None,
+        )
+        .unwrap();
+        assert!(!needs_details(&detailed));
+        let deleting = parse_instance(
+            &json!({"id": "b", "attributes": {"status": "deleting"}}),
+            None,
+        )
+        .unwrap();
+        assert!(!needs_details(&deleting));
+    }
+
+    #[test]
+    fn parses_official_locations_example() {
+        // Response example of GET /api/v2/locations in TensorDock's API docs.
+        let body = json!({"data": {"locations": [{
+            "id": "loc-uuid-12345", "city": "Austin", "stateprovince": "Texas",
+            "country": "United States", "tier": 3,
+            "gpus": [
+                {"v0Name": "h100-sxm5-80gb", "displayName": "H100 SXM5 80GB", "max_count": 8,
+                 "price_per_hr": 2.2,
+                 "resources": {"max_vcpus": 128, "max_ram_gb": 300, "max_storage_gb": 1000},
+                 "pricing": {"per_vcpu_hr": 0.003, "per_gb_ram_hr": 0.002, "per_gb_storage_hr": 0.00005},
+                 "network_features": {"dedicated_ip_available": true, "port_forwarding_available": true}},
+                {"v0Name": "geforcertx4090-pcie-24gb", "displayName": "NVIDIA GeForce RTX 4090 PCIe 24GB",
+                 "max_count": 4, "price_per_hr": 0.5,
+                 "resources": {"max_vcpus": 32, "max_ram_gb": 128, "max_storage_gb": 2000},
+                 "pricing": {"per_vcpu_hr": 0.003, "per_gb_ram_hr": 0.002, "per_gb_storage_hr": 0.00005},
+                 "network_features": {"dedicated_ip_available": false, "port_forwarding_available": true}}
+            ]
+        }]}});
+        let offers = parse_locations(&body, 100);
+        assert_eq!(offers.len(), 2);
+        assert_eq!(offers[0].country, "US");
+        assert_eq!(offers[0].gpu_name, "H100 SXM5 80GB");
+        assert!(offers[0].has_static_ip);
+        // The 4090 has no dedicated IP but supports port forwarding.
+        let forwarded = &offers[1];
+        assert!(!forwarded.has_static_ip);
+        assert!(forwarded.host_label.ends_with("(port-forwarded)"));
+        let offer_ref: TensorDockOfferRef =
+            serde_json::from_str(&forwarded.provider_offer_ref).unwrap();
+        assert!(!offer_ref.use_dedicated_ip);
+        assert!(parse_locations(&json!({"data": {"locations": []}}), 100).is_empty());
+    }
+
+    #[test]
     fn parses_port_forwarded_instance() {
         let body = json!({
             "id": "abc",
@@ -844,7 +1196,10 @@ mod tests {
         assert!(instance.is_loading());
         assert_eq!(instance.ssh_port, 20022);
         assert_eq!(instance.wireguard_port, 20051);
-        assert_eq!(instance.network_probe_port, 0, "unforwarded UDP port is unavailable");
+        assert_eq!(
+            instance.network_probe_port, 0,
+            "unforwarded UDP port is unavailable"
+        );
     }
 
     #[test]
@@ -855,6 +1210,7 @@ mod tests {
                 gpu_v0_name: "geforcertx4090-pcie-24gb".into(),
                 vcpu_count: 8,
                 ram_gb: 32,
+                use_dedicated_ip: true,
             },
             50,
             "Noland",
@@ -872,10 +1228,46 @@ mod tests {
     }
 
     #[test]
+    fn port_forwarded_payload_forwards_ssh_wireguard_and_probe() {
+        let payload = create_instance_payload(
+            &TensorDockOfferRef {
+                location_id: "loc-1".into(),
+                gpu_v0_name: "geforcertx4090-pcie-24gb".into(),
+                vcpu_count: 8,
+                ram_gb: 32,
+                use_dedicated_ip: false,
+            },
+            200,
+            "Noland",
+            "ssh-ed25519 AAAA",
+        );
+        let attributes = &payload["data"]["attributes"];
+        assert!(attributes.get("useDedicatedIp").is_none());
+        assert_eq!(
+            attributes["port_forwards"],
+            json!([
+                { "internal_port": 22, "external_port": 0 },
+                { "internal_port": 51820, "external_port": 0 },
+                { "internal_port": 6201, "external_port": 0 }
+            ])
+        );
+    }
+
+    #[test]
+    fn offer_refs_saved_before_port_forwarding_default_to_dedicated_ip() {
+        let offer_ref: TensorDockOfferRef =
+            serde_json::from_str(r#"{"locationId":"l","gpuV0Name":"g","vcpuCount":8,"ramGb":32}"#)
+                .unwrap();
+        assert!(offer_ref.use_dedicated_ip);
+    }
+
+    #[test]
     fn bootstrap_script_quotes_credentials() {
         let script = access_bootstrap_script("user", "pa'ss");
         assert!(script.contains(r"echo 'user:pa'\''ss' | sudo chpasswd"));
         assert!(script.contains("PermitRootLogin prohibit-password"));
+        // Copying keys as root would append authorized_keys to itself.
+        assert!(script.contains(r#"if [ "$(id -u)" -ne 0 ]; then"#));
         assert!(script.trim_end().ends_with("NOLAND_ACCESS_READY"));
     }
 
