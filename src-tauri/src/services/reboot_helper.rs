@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use crate::utils::shell;
 use crate::{
     errors::{AppError, AppResult},
-    services::remote_exec::RemoteExec,
+    services::{remote_exec::RemoteExec, sunshine::DISABLE_SCREEN_LOCK_SH},
 };
 
 pub struct RebootHelperService;
@@ -109,6 +109,7 @@ if [ "$(systemctl show sunshine.service --property=LoadState --value 2>/dev/null
     exit 2
 fi
 loginctl enable-linger "$TARGET_USER" 2>/dev/null || true
+{disable_lock}
 systemctl enable sunshine.service >/dev/null
 if [ "$(systemctl show noland-xorg.service --property=LoadState --value 2>/dev/null)" = "loaded" ]; then
     systemctl mask gdm sddm lightdm 2>/dev/null || true
@@ -148,6 +149,7 @@ if [ -z "$DISPLAY_XAUTH" ]; then
 fi
 echo "REBOOT_PREFLIGHT_OK user=$TARGET_USER home=$TARGET_HOME xauthority=$DISPLAY_XAUTH""#,
             target_user = shell::quote(target_user),
+            disable_lock = DISABLE_SCREEN_LOCK_SH,
         );
         let command = format!("sudo bash -lc {}", shell::quote(&script));
         let output = Self::probe_ssh(remote, &command, Duration::from_secs(30)).await?;

@@ -16,13 +16,34 @@ export interface AppUpdateProgress {
   percent: number | null;
 }
 
+const SKIPPED_VERSION_STORAGE_KEY = "noland.skippedUpdateVersion";
+
 let pendingUpdate: Update | null = null;
+
+export function getSkippedAppUpdateVersion(): string | null {
+  try {
+    return window.localStorage.getItem(SKIPPED_VERSION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function skipAppUpdateVersion(version: string): void {
+  try {
+    window.localStorage.setItem(SKIPPED_VERSION_STORAGE_KEY, version);
+  } catch {
+    // Storage unavailable: the prompt will come back on the next launch.
+  }
+}
 
 export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
   if (!("__TAURI_INTERNALS__" in window)) return null;
 
-  if (!pendingUpdate) pendingUpdate = await check({ timeout: 30_000 });
-  if (!pendingUpdate) return null;
+  // Re-query when the cached update was skipped so a newer release still surfaces.
+  if (!pendingUpdate || pendingUpdate.version === getSkippedAppUpdateVersion()) {
+    pendingUpdate = await check({ timeout: 30_000 });
+  }
+  if (!pendingUpdate || pendingUpdate.version === getSkippedAppUpdateVersion()) return null;
 
   return {
     currentVersion: pendingUpdate.currentVersion,
