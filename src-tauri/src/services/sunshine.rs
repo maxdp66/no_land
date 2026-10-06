@@ -1150,7 +1150,7 @@ WantedBy=multi-user.target"#,
             let remote = remote.clone();
             let tu = target_user_owned.clone();
             tokio::task::spawn_blocking(move || {
-                remote.ssh(&format!("id -u {tu}"), Duration::from_secs(10))
+                remote.ssh(&format!("id -u {tu}"), Duration::from_secs(30))
             })
             .await
             .map_err(|error| AppError::Command(format!("join failure: {error}")))??
@@ -1763,7 +1763,7 @@ echo "=== Setup Complete ==="
             let remote = remote.clone();
             let target_user = target_user.to_string();
             tokio::task::spawn_blocking(move || {
-                remote.ssh(&format!("id -u {target_user}"), Duration::from_secs(10))
+                remote.ssh(&format!("id -u {target_user}"), Duration::from_secs(30))
             })
             .await
             .map_err(|error| AppError::Command(format!("join failure: {error}")))??
@@ -1779,7 +1779,7 @@ echo "=== Setup Complete ==="
             let remote = remote.clone();
             let target_user = target_user.to_string();
             tokio::task::spawn_blocking(move || {
-                remote.ssh(&format!("id -g {target_user}"), Duration::from_secs(10))
+                remote.ssh(&format!("id -g {target_user}"), Duration::from_secs(30))
             })
             .await
             .map_err(|error| AppError::Command(format!("join failure: {error}")))??
@@ -1799,7 +1799,7 @@ echo "=== Setup Complete ==="
             let remote = remote.clone();
             let target_user = target_user.to_string();
             tokio::task::spawn_blocking(move || {
-                remote.ssh(&format!("id -gn {target_user}"), Duration::from_secs(10))
+                remote.ssh(&format!("id -gn {target_user}"), Duration::from_secs(30))
             })
             .await
             .map_err(|error| AppError::Command(format!("join failure: {error}")))??

@@ -678,7 +678,7 @@ exit 1"#,
 
     async fn resolve_user_home(remote: &RemoteExec, target_user: &str) -> AppResult<String> {
         let command = format!("getent passwd {} | cut -d: -f6", target_user);
-        let output = Self::probe_ssh(remote, &command, Duration::from_secs(10)).await?;
+        let output = Self::probe_ssh(remote, &command, Duration::from_secs(30)).await?;
         if output.status_code == 0 {
             let home = output.stdout.trim();
             if !home.is_empty() {
@@ -693,7 +693,7 @@ exit 1"#,
 
     async fn resolve_user_uid(remote: &RemoteExec, target_user: &str) -> AppResult<u32> {
         let command = format!("id -u {}", target_user);
-        let output = Self::probe_ssh(remote, &command, Duration::from_secs(10)).await?;
+        let output = Self::probe_ssh(remote, &command, Duration::from_secs(30)).await?;
         if output.status_code == 0 {
             return output.stdout.trim().parse::<u32>().map_err(|error| {
                 AppError::Provisioning(format!(
