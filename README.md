@@ -172,6 +172,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## Desktop releases
 
+**ON MACOS, RUN "xattr -d com.apple.quarantine /Applications/Noland\ Connect.app" (without the quotations) AFTER INSTALLING!!**
+
 Releases are produced by GitHub Actions (`.github/workflows/release.yml`) on every push to `main`:
 
 1. validation, security scanning (CodeQL, Trivy, Gitleaks, dependency audits), and the full test suite;
