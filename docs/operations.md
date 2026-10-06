@@ -292,6 +292,12 @@ under `/var/lib/noland/distro-upgrade/`. Follow progress over SSH with:
 sudo journalctl -fu noland-distro-upgrade.service
 ```
 
+On RTX Blackwell cards (RTX 50xx / RTX PRO), which only work with NVIDIA's open
+kernel modules, the tool installs the newest official Noble `nvidia-driver-N-open`
+(570+) when none is present. The swap may remove old NVIDIA packages but aborts if
+it would remove anything else. If `nvidia-smi` still fails, the log includes
+`lspci`, `dkms status`, installed NVIDIA packages and kernel `NVRM` messages.
+
 The final checks cover APT consistency, NVIDIA visibility, Xorg/display output,
 Plasma, Sunshine's listener, the user audio services, and the `sunshine_audio`
 sink. Reconnect with Play to check actual video and audio. Failed repair

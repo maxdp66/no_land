@@ -104,6 +104,45 @@ repair_packages() {
   # manager or metapackage. Keep later autoremove from discarding the desktop.
   apt-mark manual sunshine plasma-workspace plasma-desktop kwin-x11 pipewire pipewire-pulse wireplumber
 }
+# Blackwell (RTX 50xx / RTX PRO, PCI device IDs 0x29xx and 0x2bxx-0x2fxx) is only
+# supported by NVIDIA's open kernel modules, 570 or newer. A proprietary-module
+# driver carried over from Jammy never loads on these cards after the upgrade.
+has_blackwell_gpu() {
+  lspci -nn -d 10de: 2>/dev/null | grep -Eiq '\[10de:(29|2[b-f])[0-9a-f]{2}\]'
+}
+open_driver_installed() {
+  dpkg-query -W -f='${Package} ${Status}\n' 'nvidia-driver-*-open' 2>/dev/null |
+    awk -F'[- ]' '$4 == "open" && $3 >= 570 && /install ok installed$/ {found=1} END {exit !found}'
+}
+repair_nvidia_driver() {
+  has_blackwell_gpu || return 0
+  if open_driver_installed; then
+    log 'Blackwell GPU detected; the open NVIDIA driver is already installed.'
+    return 0
+  fi
+  local package version plan
+  package=$(apt-cache pkgnames nvidia-driver- | awk -F- '/^nvidia-driver-[0-9]+-open$/ && $3 >= 570' | sort -V | tail -1)
+  [[ -n "$package" ]] || { log 'No open NVIDIA driver (570+) in the Ubuntu archive; check sources.' >&2; return 1; }
+  version=$(noble_version "$package")
+  log "Blackwell GPU detected; installing $package (open kernel modules)."
+  # Swapping drivers may remove the old NVIDIA packages, but nothing else.
+  plan=$(apt_run -s install "$package=$version")
+  if grep '^Remv ' <<<"$plan" | grep -qv nvidia; then
+    log 'Driver swap would remove non-NVIDIA packages; refusing.' >&2
+    grep '^Remv ' <<<"$plan" >&2
+    return 1
+  fi
+  apt_run -y install "$package=$version"
+  apt-mark manual "$package"
+}
+nvidia_diagnostics() {
+  log 'NVIDIA driver is not usable; diagnostics follow.' >&2
+  lspci -nnk -d 10de: || true
+  dkms status || true
+  dpkg-query -W -f='${Package} ${Version}\n' 'nvidia-*' 'libnvidia-*' 'linux-modules-nvidia-*' 2>/dev/null || true
+  uname -r
+  journalctl -k -b --no-pager 2>/dev/null | grep -Ei 'nvrm|nvidia' | tail -n 30 || true
+}
 repair_audio() {
   loginctl enable-linger "$TARGET_USER"
   systemctl start "user@$USER_UID.service"
@@ -138,7 +177,7 @@ EOF
 }
 verify() {
   apt_run check
-  nvidia-smi
+  nvidia-smi || { nvidia_diagnostics; return 1; }
   systemctl restart noland-desktop.service sunshine.service
   local attempt
   for attempt in {1..30}; do
@@ -207,6 +246,7 @@ worker() {
       disable_stale_wine_source
       apt_run update
       repair_packages
+      repair_nvidia_driver
       repair_audio
       # Restore the dedicated Xorg service as sole display owner.
       for manager in gdm gdm3 sddm lightdm; do
@@ -230,6 +270,7 @@ worker() {
       disable_stale_wine_source
       apt_run update
       repair_packages
+      repair_nvidia_driver
       verify
       printf complete > "$STATE/phase"
       systemctl disable "$UNIT"

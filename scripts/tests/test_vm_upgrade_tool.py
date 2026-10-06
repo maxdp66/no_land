@@ -204,6 +204,47 @@ worker
             self.assertEqual((state / 'phase').read_text(), 'failed')
             self.assertNotIn('UNEXPECTED_', result.stdout)
 
+    NVIDIA_MOCKS = '''
+apt-cache() { printf 'nvidia-driver-535\\nnvidia-driver-570-open\\nnvidia-driver-580-open\\nnvidia-driver-580\\n'; }
+noble_version() { echo 580.1-0ubuntu1; }
+apt_run() { printf 'APT %s\\n' "$*"; if [[ "$*" == *" -s "* || "$1" == -s ]]; then printf '%b' "$SIMULATION"; fi; }
+apt-mark() { printf 'MARK %s\\n' "$*"; }
+dpkg-query() { printf '%b' "$INSTALLED"; }
+lspci() { printf '%b' "$GPU"; }
+'''
+
+    def test_blackwell_gpu_gets_newest_open_noble_driver(self):
+        result = bash(self.NVIDIA_MOCKS + '''
+GPU='01:00.0 VGA compatible controller [0300]: NVIDIA [10de:2b85]\\n'
+INSTALLED='nvidia-driver-570 install ok installed\\n'
+SIMULATION='Remv nvidia-driver-570 [570.1]\\nRemv libnvidia-gl-570 [570.1]\\n'
+repair_nvidia_driver
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('APT -y install nvidia-driver-580-open=580.1-0ubuntu1', result.stdout)
+        self.assertIn('MARK manual nvidia-driver-580-open', result.stdout)
+
+    def test_blackwell_with_open_driver_or_other_gpu_is_left_alone(self):
+        for gpu, installed in (('[10de:2b85]', 'nvidia-driver-580-open install ok installed\\n'),
+                               ('[10de:2684]', '')):
+            result = bash(self.NVIDIA_MOCKS + f'''
+GPU='01:00.0 VGA compatible controller [0300]: NVIDIA {gpu}\\n'
+INSTALLED='{installed}'
+repair_nvidia_driver
+''')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn('APT', result.stdout)
+
+    def test_driver_swap_never_removes_non_nvidia_packages(self):
+        result = bash(self.NVIDIA_MOCKS + '''
+GPU='01:00.0 VGA compatible controller [0300]: NVIDIA [10de:2c02]\\n'
+INSTALLED=''
+SIMULATION='Remv nvidia-driver-570 [570.1]\\nRemv plasma-desktop [5.27]\\n'
+repair_nvidia_driver
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('APT -y install', result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
